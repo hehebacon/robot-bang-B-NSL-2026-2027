@@ -46,6 +46,7 @@ static float target_speed = 0.0f;
 static unsigned int ramp_elapsed_ms = 0;
 static unsigned int auto_elapsed_ms = 0;
 static unsigned char auto_timed_out = 0;
+static unsigned char manual_started = 0;
 
 static void stop_drive(void)
 {
@@ -277,7 +278,7 @@ int main(void)
     for (;;) {
         /* A timeout stops the robot and stays stopped. Do not silently switch
          * to manual after a failed/late Part 1; the official rule must define it. */
-        if (stage == STAGE_FIRST && auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
+        if (!manual_started && auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
             auto_timed_out = 1;
             stop_drive();
             for (;;) {
@@ -302,6 +303,7 @@ int main(void)
                 delay(0, 0, 0, 250);
                 current_speed = 0.0f;
                 target_speed = 0.0f;
+                manual_started = 1;
                 manual_remote_mode();
             }
         } else {
@@ -309,7 +311,7 @@ int main(void)
         }
 
         delay(0, 0, 0, LOOP_DELAY_MS);
-        if (stage == STAGE_FIRST) auto_account_delay(LOOP_DELAY_MS);
+        if (!manual_started) auto_account_delay(LOOP_DELAY_MS);
     }
 
     return 0;
