@@ -254,14 +254,28 @@ static void manual_remote_mode(void)
 
         update_speed_ramp();
 
-        if (rc(LEFT_KEY) == TRUE) {
+        /* Brake has priority over steering. Previously, LEFT/RIGHT could still
+         * command a turn while DOWN was held, contradicting the stop behavior. */
+        if (rc(DOWN_KEY) == TRUE) {
+            stop_drive();
+            current_speed = 0.0f;
+            target_speed = 0.0f;
+            ramp_elapsed_ms = 0;
+        } else if (rc(LEFT_KEY) == TRUE) {
             LMotor_1(0);
             RMotor_1(motor_speed());
         } else if (rc(RIGHT_KEY) == TRUE) {
             LMotor_1(motor_speed());
             RMotor_1(0);
-        } else {
+        } else if (rc(UP_KEY) == TRUE) {
             drive_forward_ramped();
+        } else {
+            /* No input means stop, rather than continuing straight while
+             * the speed ramp decelerates. */
+            stop_drive();
+            current_speed = 0.0f;
+            target_speed = 0.0f;
+            ramp_elapsed_ms = 0;
         }
 
         delay(0, 0, 0, LOOP_DELAY_MS);
