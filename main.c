@@ -13,7 +13,7 @@
  * IMPORTANT HARDWARE ASSUMPTIONS TO VERIFY BEFORE DRIVING:
  * 1. IR1=left, IR2=center, IR3=right.
  * 2. ir(n, 0, NONE)==TRUE means that sensor sees black.
- * 3. Positive motor speed moves forward; motor speed values 0..5 are valid.
+ * 3. Positive motor speed moves forward. Confirm that Huna accepts speed 8 before use.
  * 4. The first and second all-black patterns really represent crossings on
  *    this course. If a broad black line/marker creates the same pattern,
  *    crossing detection must be calibrated.
@@ -28,9 +28,9 @@
  */
 #include "functions_codes.h"
 
-#define SPEED_STRAIGHT          5
-#define SPEED_MEDIUM            4
-#define SPEED_TIGHT              2
+#define SPEED_STRAIGHT          8
+#define SPEED_MEDIUM            5
+#define SPEED_TIGHT              3
 #define CROSSING_SPEED           3
 #define CROSSING_PASS_MS       180
 #define CROSSING_SAMPLE_MS       5
@@ -40,7 +40,7 @@
 #define LOOP_DELAY_MS            2
 #define LEARN_STRAIGHT_TICKS    20
 #define SPEED_MIN                2
-#define SPEED_MAX                5
+#define SPEED_MAX                8
 
 #define STAGE_FIRST              0
 #define STAGE_SECOND             1
@@ -49,8 +49,9 @@ static int last_turn = 0; /* -1 = left, +1 = right, 0 = unknown */
 
 /*
  * Lightweight online adaptation (RAM only, resets on power-up):
- * - Stable center-only readings gradually permit a higher speed.
- * - Turn patterns immediately lower the learned speed.
+ * - Stable center-only readings gradually permit speed to ramp toward 8.
+ * - Side + center is treated as an early curve cue and reduces target to 5.
+ * - Side-only is treated as a tighter curve and reduces target to 3.
  * - Line loss drops speed to the safe minimum.
  * This is not route learning and is not saved between runs.
  */
@@ -67,11 +68,11 @@ static void learn_straight_speed(void)
     }
 }
 
-static void learn_turn_speed(int severity)
+static void learn_turn_speed(int target)
 {
     straight_ticks = 0;
-    if (learned_speed > severity) {
-        learned_speed = severity;
+    if (learned_speed > target) {
+        learned_speed = target;
     }
 }
 
