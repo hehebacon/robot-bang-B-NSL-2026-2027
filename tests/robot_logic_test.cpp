@@ -18,7 +18,7 @@ int main() {
 
   in.ir_left_black = true;
   out = controller.update(in);
-  assert(out.left_motor == 60 && out.right_motor == -40);
+  assert(out.left_motor == -40 && out.right_motor == 60);
 
   // First all-black cross: drive through for the configured duration.
   in.ir_left_black = true;
