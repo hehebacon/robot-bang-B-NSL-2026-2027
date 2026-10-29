@@ -82,6 +82,9 @@ int main() {
 
   // Reset returns the state machine to autonomous stage 1.
   controller.reset();
+  in.ir_left_black = false;
+  in.ir_center_black = false;
+  in.ir_right_black = false;
   out = controller.update(in);
   expect_drive(out, 0, 0);
   assert(out.mode == Mode::Autonomous && out.stage == 1);
