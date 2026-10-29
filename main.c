@@ -2,11 +2,12 @@
  * BANG B - HUNA E-ROBOT V1.4
  * main.c - Huna C firmware (not desktop C++).
  *
- * AUTO: follow the line, ramp speed smoothly, slow for sensor-detected turns,
- * pass two crossings, then enter MANUAL.
- * MANUAL: UP ramps forward speed toward the configured maximum; DOWN acts as
- * a brake command and ramps the target to zero (it does NOT reverse the robot).
- * LEFT/RIGHT steer at the current ramped speed.
+ * AUTO (Part 1): follow the line for at most 60 seconds. The existing course
+ * logic expects a first crossing and a second crossing; the second enters MANUAL.
+ * If the 60-second limit expires first, stop and latch safely (do not assume
+ * the rules allow starting Part 2 after an AUTO timeout).
+ * MANUAL (Part 2): only remote-control inputs move the robot; line following
+ * and autonomous obstacle pushing are disabled in this state.
  *
  * Hardware assumptions still requiring verification:
  * - IR1=left, IR2=center, IR3=right.
@@ -34,6 +35,7 @@
 #define SPEED_STEP             0.1f
 #define SPEED_MIN              0.0f
 #define SPEED_MAX              8.0f
+#define AUTO_TIME_LIMIT_MS   60000U
 
 #define STAGE_FIRST              0
 #define STAGE_SECOND             1
@@ -42,11 +44,26 @@ static int last_turn = 0; /* -1 = left, +1 = right, 0 = unknown */
 static float current_speed = 0.0f;
 static float target_speed = 0.0f;
 static unsigned int ramp_elapsed_ms = 0;
+static unsigned int auto_elapsed_ms = 0;
+static unsigned char auto_timed_out = 0;
 
 static void stop_drive(void)
 {
     LMotor_1(0);
     RMotor_1(0);
+}
+
+/* Account for known blocking delays while Part 1 is active. This is a
+ * software estimate, not a hardware clock; confirm timing on the real board. */
+static void auto_account_delay(unsigned int ms)
+{
+    if (!auto_timed_out && auto_elapsed_ms < AUTO_TIME_LIMIT_MS) {
+        if (ms >= AUTO_TIME_LIMIT_MS - auto_elapsed_ms) {
+            auto_elapsed_ms = AUTO_TIME_LIMIT_MS;
+        } else {
+            auto_elapsed_ms += ms;
+        }
+    }
 }
 
 /* Move current_speed toward target_speed by 0.1 every 20 ms. */
@@ -101,6 +118,7 @@ static unsigned char crossing_stable(void)
     for (i = 0; i < CROSSING_STABLE_SAMPLES; ++i) {
         if (all_black()) ++count;
         delay(0, 0, 0, CROSSING_SAMPLE_MS);
+        auto_account_delay(CROSSING_SAMPLE_MS);
     }
     return (count == CROSSING_STABLE_SAMPLES);
 }
@@ -157,6 +175,7 @@ static void follow_line_adaptive(void)
                 return;
             }
             delay(0, 0, 0, LOOP_DELAY_MS);
+            auto_account_delay(LOOP_DELAY_MS);
             elapsed += LOOP_DELAY_MS;
         }
         stop_drive();
@@ -191,12 +210,14 @@ static unsigned char clear_first_crossing(void)
     LMotor_1(CROSSING_SPEED);
     RMotor_1(CROSSING_SPEED);
     delay(0, 0, 0, CROSSING_PASS_MS);
+    auto_account_delay(CROSSING_PASS_MS);
     elapsed += CROSSING_PASS_MS;
 
     while (elapsed < CROSSING_MAX_MS) {
         if (!all_black()) {
             stop_drive();
             delay(0, 0, 0, 40);
+            auto_account_delay(40);
             current_speed = 0.0f;
             target_speed = 0.0f;
             return 1;
@@ -204,6 +225,7 @@ static unsigned char clear_first_crossing(void)
         LMotor_1(CROSSING_SPEED);
         RMotor_1(CROSSING_SPEED);
         delay(0, 0, 0, CROSSING_SAMPLE_MS);
+        auto_account_delay(CROSSING_SAMPLE_MS);
         elapsed += CROSSING_SAMPLE_MS;
     }
 
@@ -253,6 +275,17 @@ int main(void)
     stop_drive();
 
     for (;;) {
+        /* A timeout stops the robot and stays stopped. Do not silently switch
+         * to manual after a failed/late Part 1; the official rule must define it. */
+        if (stage == STAGE_FIRST && auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
+            auto_timed_out = 1;
+            stop_drive();
+            for (;;) {
+                stop_drive();
+                delay(0, 0, 0, 100);
+            }
+        }
+
         if (all_black() && crossing_stable()) {
             stop_drive();
 
@@ -276,6 +309,7 @@ int main(void)
         }
 
         delay(0, 0, 0, LOOP_DELAY_MS);
+        if (stage == STAGE_FIRST) auto_account_delay(LOOP_DELAY_MS);
     }
 
     return 0;
