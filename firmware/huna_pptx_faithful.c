@@ -13,6 +13,7 @@
 
 #define MOTOR_SPEED 5
 #define CROSSING_DRIVE_MS 250
+#define CROSSING_CLEAR_TIMEOUT_TICKS 500 /* 500 x 10 ms = 5 seconds */
 
 static unsigned char line_black(unsigned char sensor)
 {
@@ -137,9 +138,23 @@ int main(void)
              * Chờ robot rời vạch ngang thứ nhất để không nhận nhầm
              * chính vạch đó là vạch ngang lần 2 ở đầu giai đoạn kế tiếp.
              */
-            while (all_three_black()) {
-                drive_forward();
-                delay(0, 0, 0, 10);
+            {
+                unsigned int clear_wait_ticks = 0;
+
+                while (all_three_black() && clear_wait_ticks < CROSSING_CLEAR_TIMEOUT_TICKS) {
+                    drive_forward();
+                    delay(0, 0, 0, 10);
+                    ++clear_wait_ticks;
+                }
+
+                if (all_three_black()) {
+                    /* Sensor/vạch không thoát được trạng thái all-black: dừng an toàn. */
+                    stop_motors();
+                    for (;;) {
+                        stop_motors();
+                        delay(0, 0, 0, 100);
+                    }
+                }
             }
             stop_motors();
             break;
