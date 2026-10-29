@@ -215,13 +215,16 @@ static unsigned char clear_first_crossing(void)
 static void manual_remote_mode(void)
 {
     for (;;) {
-        if (rc(UP_KEY) == TRUE) {
-            target_speed = SPEED_STRAIGHT;
-        } else if (rc(DOWN_KEY) == TRUE) {
-            /* DOWN is a brake/decelerate command, never reverse. */
+        if (rc(DOWN_KEY) == TRUE) {
+            /* DOWN has priority: brake/decelerate, never reverse. */
             target_speed = 0.0f;
+        } else if (rc(UP_KEY) == TRUE) {
+            target_speed = SPEED_STRAIGHT;
+        } else if (rc(LEFT_KEY) == TRUE || rc(RIGHT_KEY) == TRUE) {
+            /* Preserve steering-only input; turn at a moderate target speed. */
+            target_speed = SPEED_MEDIUM;
         } else {
-            /* Releasing the controls lets the robot ramp down to a stop. */
+            /* Releasing all controls lets the robot ramp down to a stop. */
             target_speed = 0.0f;
         }
 
