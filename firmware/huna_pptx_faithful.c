@@ -77,6 +77,10 @@ static void follow_line(void)
     else if (ir2 && ir3) {
         turn_right();
     }
+    else if (ir1 && ir3) {
+        /* Tổ hợp không được slide mô tả: dừng thay vì tự đoán hướng rẽ. */
+        stop_motors();
+    }
     else if (ir1) {
         turn_left();
     }
