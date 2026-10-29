@@ -1,30 +1,16 @@
 /*
  * Huna / E-Robot V1.4 — Bảng B
- * Bản viết lại bám theo tài liệu "HƯỚNG DẪN LẬP TRÌNH BẢNG B.pptx".
+ * Chỉnh luồng AUTO -> AUTO giai đoạn 2 -> MANUAL dựa trên source mẫu
+ * người dùng cung cấp.
  *
- * Lưu ý:
- * - Theo slide: cảm biến gặp vạch đen => trạng thái NONE.
- * - Motor speed > 0: tiến; < 0: lùi; = 0: dừng.
- * - IR1 = trái, IR2 = giữa, IR3 = phải (vị trí khuyến nghị trong slide).
- * - MOTOR_SPEED và CROSSING_DRIVE_MS cần căn chỉnh theo robot thực tế.
+ * Giữ nguyên quy ước gọi ir() và các tổ hợp cảm biến của source mẫu.
+ * Chưa xác minh chiều motor/cảm biến trên phần cứng thật.
  */
-
 #include "functions_codes.h"
 
 #define MOTOR_SPEED 5
 #define CROSSING_DRIVE_MS 250
 #define CROSSING_CLEAR_TIMEOUT_TICKS 500 /* 500 x 10 ms = 5 seconds */
-
-static unsigned char line_black(unsigned char sensor)
-{
-    /* Theo API mẫu Huna: yêu cầu trạng thái NONE và kiểm tra TRUE. */
-    return (ir(sensor, 0, NONE) == TRUE);
-}
-
-static unsigned char all_three_black(void)
-{
-    return line_black(1) && line_black(2) && line_black(3);
-}
 
 static void stop_motors(void)
 {
@@ -32,91 +18,77 @@ static void stop_motors(void)
     RMotor_1(0);
 }
 
-static void drive_forward(void)
+static unsigned char all_three_none(void)
 {
-    LMotor_1(MOTOR_SPEED);
-    RMotor_1(MOTOR_SPEED);
+    return (ir(1, 0, NONE) == TRUE &&
+            ir(2, 0, NONE) == TRUE &&
+            ir(3, 0, NONE) == TRUE);
 }
 
-static void drive_backward(void)
-{
-    LMotor_1(-MOTOR_SPEED);
-    RMotor_1(-MOTOR_SPEED);
-}
-
-/* Đúng chiều rẽ theo slide:
- * trái: motor phải tiến, motor trái lùi;
- * phải: motor phải lùi, motor trái tiến.
+/*
+ * Giữ nguyên các pattern và lệnh motor từ source mẫu.
+ * Nhánh trùng NONE/SENSE/SENSE đã bỏ vì nó không thể phân biệt
+ * với nhánh giống hệt đứng trước.
  */
-static void turn_left(void)
+static void follow_line_sample(void)
 {
-    LMotor_1(-MOTOR_SPEED);
-    RMotor_1(MOTOR_SPEED);
-}
-
-static void turn_right(void)
-{
-    LMotor_1(MOTOR_SPEED);
-    RMotor_1(-MOTOR_SPEED);
-}
-
-static void follow_line(void)
-{
-    unsigned char ir1 = line_black(1);
-    unsigned char ir2 = line_black(2);
-    unsigned char ir3 = line_black(3);
-
-    /* Vạch ngang được xử lý riêng ở từng giai đoạn. */
-    if (ir1 && ir2 && ir3) {
+    if (ir(1, 0, NONE) == TRUE &&
+        ir(2, 0, NONE) == TRUE &&
+        ir(3, 0, NONE) == TRUE) {
+        /* Vạch ngang được xử lý bởi vòng AUTO, không xử lý ở đây. */
         stop_motors();
     }
-    /* Ưu tiên góc vuông trước điều kiện cảm biến đơn. */
-    else if (ir1 && ir2) {
-        turn_left();
+    else if (ir(1, 0, NONE) == TRUE &&
+             ir(2, 0, NONE) == TRUE &&
+             ir(3, 950, SENSE) == TRUE) {
+        LMotor_1(0);
+        RMotor_1(MOTOR_SPEED);
     }
-    else if (ir2 && ir3) {
-        turn_right();
+    else if (ir(1, 0, NONE) == TRUE &&
+             ir(2, 950, SENSE) == TRUE &&
+             ir(3, 950, SENSE) == TRUE) {
+        LMotor_1(MOTOR_SPEED);
+        RMotor_1(0);
     }
-    else if (ir1 && ir3) {
-        /* Tổ hợp không được slide mô tả: dừng thay vì tự đoán hướng rẽ. */
-        stop_motors();
+    else if (ir(1, 950, SENSE) == TRUE &&
+             ir(2, 950, SENSE) == TRUE &&
+             ir(3, 0, NONE) == TRUE) {
+        LMotor_1(0);
+        RMotor_1(MOTOR_SPEED);
     }
-    else if (ir1) {
-        turn_left();
-    }
-    else if (ir3) {
-        turn_right();
-    }
-    else if (ir2) {
-        drive_forward();
+    else if (ir(1, 950, SENSE) == TRUE &&
+             ir(2, 0, NONE) == TRUE &&
+             ir(3, 950, SENSE) == TRUE) {
+        LMotor_1(MOTOR_SPEED);
+        RMotor_1(MOTOR_SPEED);
     }
     else {
-        /* Tài liệu không chỉ định hành vi khi mất line: chọn dừng an toàn. */
+        /* Trạng thái không được source mẫu mô tả: dừng thay vì giữ lệnh cũ. */
         stop_motors();
     }
 }
 
-static void remote_control(void)
+static void manual_control(void)
 {
     for (;;) {
         if (rc(UP_KEY) == TRUE) {
-            drive_forward();
+            LMotor_1(MOTOR_SPEED);
+            RMotor_1(MOTOR_SPEED);
         }
         else if (rc(DOWN_KEY) == TRUE) {
-            drive_backward();
-        }
-        else if (rc(LEFT_KEY) == TRUE) {
-            turn_left();
+            LMotor_1(-MOTOR_SPEED);
+            RMotor_1(-MOTOR_SPEED);
         }
         else if (rc(RIGHT_KEY) == TRUE) {
-            turn_right();
+            LMotor_1(MOTOR_SPEED);
+            RMotor_1(0);
         }
-        else if (rc(OFF_KEY) == TRUE) {
-            /* KEY OFF: dừng hai motor theo slide. */
-            stop_motors();
+        else if (rc(LEFT_KEY) == TRUE) {
+            LMotor_1(0);
+            RMotor_1(MOTOR_SPEED);
         }
         else {
-            /* Không có nút điều khiển: dừng theo yêu cầu KEY OFF của slide. */
+            /* OFF_KEY hoặc không có phím: dừng. */
             stop_motors();
         }
     }
@@ -124,66 +96,66 @@ static void remote_control(void)
 
 int main(void)
 {
+    unsigned int clear_wait_ticks;
+
     mcu_initialization();
     stop_motors();
 
     /*
-     * GIAI ĐOẠN 1:
-     * Bám line cho tới vạch ngang lần 1 (IR1 + IR2 + IR3 đều NONE/đen).
-     * Chạy thẳng theo thời gian rồi chuyển sang giai đoạn 2.
+     * AUTO giai đoạn 1:
+     * Tự dò line cho tới giao điểm đầu tiên.
      */
     for (;;) {
-        if (all_three_black()) {
-            drive_forward();
+        if (all_three_none()) {
+            LMotor_1(MOTOR_SPEED);
+            RMotor_1(MOTOR_SPEED);
             delay(0, 0, 0, CROSSING_DRIVE_MS);
-            stop_motors();
 
             /*
-             * Chờ robot rời vạch ngang thứ nhất để không nhận nhầm
-             * chính vạch đó là vạch ngang lần 2 ở đầu giai đoạn kế tiếp.
+             * Chờ rời vạch ngang để giai đoạn 2 không nhận nhầm
+             * chính giao điểm đầu tiên thành giao điểm thứ hai.
              */
-            {
-                unsigned int clear_wait_ticks = 0;
+            clear_wait_ticks = 0;
+            while (all_three_none() &&
+                   clear_wait_ticks < CROSSING_CLEAR_TIMEOUT_TICKS) {
+                LMotor_1(MOTOR_SPEED);
+                RMotor_1(MOTOR_SPEED);
+                delay(0, 0, 0, 10);
+                ++clear_wait_ticks;
+            }
 
-                while (all_three_black() && clear_wait_ticks < CROSSING_CLEAR_TIMEOUT_TICKS) {
-                    drive_forward();
-                    delay(0, 0, 0, 10);
-                    ++clear_wait_ticks;
-                }
-
-                if (all_three_black()) {
-                    /* Sensor/vạch không thoát được trạng thái all-black: dừng an toàn. */
+            if (all_three_none()) {
+                /* Không rời được trạng thái giao điểm: dừng an toàn. */
+                stop_motors();
+                for (;;) {
                     stop_motors();
-                    for (;;) {
-                        stop_motors();
-                        delay(0, 0, 0, 100);
-                    }
+                    delay(0, 0, 0, 100);
                 }
             }
+
             stop_motors();
             break;
         }
 
-        follow_line();
+        follow_line_sample();
     }
 
     /*
-     * GIAI ĐOẠN 2:
-     * Bám line tương tự giai đoạn 1; vạch ngang lần 2 thì dừng
-     * và chuyển sang điều khiển remote.
+     * AUTO giai đoạn 2:
+     * Tiếp tục dò line; giao điểm thứ hai thì dừng và chuyển MANUAL.
      */
     for (;;) {
-        if (all_three_black()) {
+        if (all_three_none()) {
             stop_motors();
             delay(0, 0, 0, 250);
             break;
         }
 
-        follow_line();
+        follow_line_sample();
     }
 
-    /* GIAI ĐOẠN 3: điều khiển remote; KEY OFF/không có nút => dừng. */
-    remote_control();
+    /* MANUAL: điều khiển bằng remote; không có phím thì dừng. */
+    manual_control();
 
     return 0;
 }
