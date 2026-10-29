@@ -34,11 +34,12 @@ The two servos are not required for basic line following; only include them if a
 - Portable C++17 controller core: [firmware/robot_logic.hpp](firmware/robot_logic.hpp)
 - Host-side tests: [tests/robot_logic_test.cpp](tests/robot_logic_test.cpp)
 - Build and test: [CMakeLists.txt](CMakeLists.txt)
+- Huna / E-Robot example using `functions_codes.h`: [firmware/huna_main.c](firmware/huna_main.c)
 - Hardware integration notes: [docs/FIRMWARE_STATUS.md](docs/FIRMWARE_STATUS.md)
 
-The core models the guide's three-IR line-following cases, a timed first crossing, a second crossing that stops and switches to remote control, and remote forward/back/left/right/key-off behavior.
+The portable core models three-IR line following, a timed first crossing, a second crossing that stops and switches to remote control, and remote forward/back/left/right/off behavior. The Huna example uses the API declarations in the supplied `functions_codes.h` (`ir`, `rc`, `LMotor_1`, `RMotor_1`, `delay`, and `mcu_initialization`).
 
-**Important:** this is not yet board-ready firmware. The supplied slides identify E-Robot V1.4 and a Huna mainboard but do not specify the MCU, sensor GPIO pins, motor-driver API, or remote-receiver API. No board-specific pins or third-party libraries have been guessed. The host tests cover only control logic, not the physical robot.
+**Important:** `firmware/huna_main.c` is an integration example, not a verified downloadable firmware image. It assumes sensors 1/2/3 are left/center/right and that `ir(sensor, 0, NONE) == TRUE` means black, matching the user's sample. Motor speed is initially set to 5 and crossing delay to 250 ms. These values and turning behavior must be tested on the actual robot in a safe, lifted-wheel test before track use. The host tests do not compile against E-Robot or test physical hardware.
 
 To run the host tests with CMake 3.16+ and a C++17 compiler:
 
