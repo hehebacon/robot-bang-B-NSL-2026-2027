@@ -1,16 +1,21 @@
 /*
  * Huna / E-Robot V1.4 — Bảng B
- * Chỉnh luồng AUTO -> AUTO giai đoạn 2 -> MANUAL dựa trên source mẫu
- * người dùng cung cấp.
+ * AUTO chặng 1 -> giao điểm 1 -> AUTO chặng 2 -> MANUAL.
  *
- * Giữ nguyên quy ước gọi ir() và các tổ hợp cảm biến của source mẫu.
- * Chưa xác minh chiều motor/cảm biến trên phần cứng thật.
+ * Quy ước lấy từ hướng dẫn Bảng B:
+ * - IR đen/vạch: ir(pin, 0, NONE) == TRUE.
+ * - IR1 đen: rẽ trái; IR2 đen: đi thẳng; IR3 đen: rẽ phải.
+ * - IR1+IR2: trái; IR2+IR3: phải.
+ * - Cả ba IR đen: nhận diện giao điểm.
+ *
+ * Chưa xác minh trên phần cứng thật. Cần tinh chỉnh tốc độ và thời gian
+ * chạy qua giao điểm theo robot/sân thực tế.
  */
 #include "functions_codes.h"
 
 #define MOTOR_SPEED 5
 #define CROSSING_DRIVE_MS 250
-#define CROSSING_CLEAR_TIMEOUT_TICKS 500 /* 500 x 10 ms = 5 seconds */
+#define CROSSING_CLEAR_TIMEOUT_TICKS 500 /* 500 x 10 ms = 5 s */
 
 static void stop_motors(void)
 {
@@ -18,52 +23,55 @@ static void stop_motors(void)
     RMotor_1(0);
 }
 
-static unsigned char all_three_none(void)
+/* Theo tài liệu Huna: trạng thái NONE ở ngưỡng 0 là vạch đen. */
+static unsigned char sees_black(unsigned char sensor)
 {
-    return (ir(1, 0, NONE) == TRUE &&
-            ir(2, 0, NONE) == TRUE &&
-            ir(3, 0, NONE) == TRUE);
+    return (ir(sensor, 0, NONE) == TRUE);
+}
+
+static unsigned char all_three_black(void)
+{
+    return (sees_black(1) && sees_black(2) && sees_black(3));
 }
 
 /*
- * Giữ nguyên các pattern và lệnh motor từ source mẫu.
- * Nhánh trùng NONE/SENSE/SENSE đã bỏ vì nó không thể phân biệt
- * với nhánh giống hệt đứng trước.
+ * Điều khiển line theo vị trí vạch:
+ * IR1 ở trái, IR2 ở giữa, IR3 ở phải.
+ * Rẽ trái: motor trái lùi, motor phải tiến.
+ * Rẽ phải: motor trái tiến, motor phải lùi.
  */
-static void follow_line_sample(void)
+static void follow_line(void)
 {
-    if (ir(1, 0, NONE) == TRUE &&
-        ir(2, 0, NONE) == TRUE &&
-        ir(3, 0, NONE) == TRUE) {
-        /* Vạch ngang được xử lý bởi vòng AUTO, không xử lý ở đây. */
+    unsigned char left_black = sees_black(1);
+    unsigned char center_black = sees_black(2);
+    unsigned char right_black = sees_black(3);
+
+    if (left_black && center_black && right_black) {
+        /* Giao điểm được xử lý bởi state machine trong main(). */
         stop_motors();
     }
-    else if (ir(1, 0, NONE) == TRUE &&
-             ir(2, 0, NONE) == TRUE &&
-             ir(3, 950, SENSE) == TRUE) {
-        LMotor_1(0);
+    else if (left_black && center_black) {
+        LMotor_1(-MOTOR_SPEED);
         RMotor_1(MOTOR_SPEED);
     }
-    else if (ir(1, 0, NONE) == TRUE &&
-             ir(2, 950, SENSE) == TRUE &&
-             ir(3, 950, SENSE) == TRUE) {
+    else if (center_black && right_black) {
         LMotor_1(MOTOR_SPEED);
-        RMotor_1(0);
+        RMotor_1(-MOTOR_SPEED);
     }
-    else if (ir(1, 950, SENSE) == TRUE &&
-             ir(2, 950, SENSE) == TRUE &&
-             ir(3, 0, NONE) == TRUE) {
-        LMotor_1(0);
+    else if (left_black) {
+        LMotor_1(-MOTOR_SPEED);
         RMotor_1(MOTOR_SPEED);
     }
-    else if (ir(1, 950, SENSE) == TRUE &&
-             ir(2, 0, NONE) == TRUE &&
-             ir(3, 950, SENSE) == TRUE) {
+    else if (center_black) {
         LMotor_1(MOTOR_SPEED);
         RMotor_1(MOTOR_SPEED);
+    }
+    else if (right_black) {
+        LMotor_1(MOTOR_SPEED);
+        RMotor_1(-MOTOR_SPEED);
     }
     else {
-        /* Trạng thái không được source mẫu mô tả: dừng thay vì giữ lệnh cũ. */
+        /* Mất line / tổ hợp chưa được định nghĩa: dừng an toàn. */
         stop_motors();
     }
 }
@@ -79,13 +87,13 @@ static void manual_control(void)
             LMotor_1(-MOTOR_SPEED);
             RMotor_1(-MOTOR_SPEED);
         }
+        else if (rc(LEFT_KEY) == TRUE) {
+            LMotor_1(-MOTOR_SPEED);
+            RMotor_1(MOTOR_SPEED);
+        }
         else if (rc(RIGHT_KEY) == TRUE) {
             LMotor_1(MOTOR_SPEED);
-            RMotor_1(0);
-        }
-        else if (rc(LEFT_KEY) == TRUE) {
-            LMotor_1(0);
-            RMotor_1(MOTOR_SPEED);
+            RMotor_1(-MOTOR_SPEED);
         }
         else {
             /* OFF_KEY hoặc không có phím: dừng. */
@@ -94,68 +102,57 @@ static void manual_control(void)
     }
 }
 
+static void wait_until_crossing_clears(void)
+{
+    unsigned int ticks = 0;
+
+    while (all_three_black() && ticks < CROSSING_CLEAR_TIMEOUT_TICKS) {
+        LMotor_1(MOTOR_SPEED);
+        RMotor_1(MOTOR_SPEED);
+        delay(0, 0, 0, 10);
+        ++ticks;
+    }
+
+    if (all_three_black()) {
+        /* Không thoát được vùng giao điểm: không tự chạy tiếp mù. */
+        stop_motors();
+        for (;;) {
+            stop_motors();
+            delay(0, 0, 0, 100);
+        }
+    }
+}
+
 int main(void)
 {
-    unsigned int clear_wait_ticks;
-
     mcu_initialization();
     stop_motors();
 
-    /*
-     * AUTO giai đoạn 1:
-     * Tự dò line cho tới giao điểm đầu tiên.
-     */
+    /* AUTO chặng 1: dò line tới giao điểm thứ nhất. */
     for (;;) {
-        if (all_three_none()) {
+        if (all_three_black()) {
             LMotor_1(MOTOR_SPEED);
             RMotor_1(MOTOR_SPEED);
             delay(0, 0, 0, CROSSING_DRIVE_MS);
-
-            /*
-             * Chờ rời vạch ngang để giai đoạn 2 không nhận nhầm
-             * chính giao điểm đầu tiên thành giao điểm thứ hai.
-             */
-            clear_wait_ticks = 0;
-            while (all_three_none() &&
-                   clear_wait_ticks < CROSSING_CLEAR_TIMEOUT_TICKS) {
-                LMotor_1(MOTOR_SPEED);
-                RMotor_1(MOTOR_SPEED);
-                delay(0, 0, 0, 10);
-                ++clear_wait_ticks;
-            }
-
-            if (all_three_none()) {
-                /* Không rời được trạng thái giao điểm: dừng an toàn. */
-                stop_motors();
-                for (;;) {
-                    stop_motors();
-                    delay(0, 0, 0, 100);
-                }
-            }
-
+            wait_until_crossing_clears();
             stop_motors();
             break;
         }
 
-        follow_line_sample();
+        follow_line();
     }
 
-    /*
-     * AUTO giai đoạn 2:
-     * Tiếp tục dò line; giao điểm thứ hai thì dừng và chuyển MANUAL.
-     */
+    /* AUTO chặng 2: giao điểm tiếp theo thì dừng và chuyển MANUAL. */
     for (;;) {
-        if (all_three_none()) {
+        if (all_three_black()) {
             stop_motors();
             delay(0, 0, 0, 250);
             break;
         }
 
-        follow_line_sample();
+        follow_line();
     }
 
-    /* MANUAL: điều khiển bằng remote; không có phím thì dừng. */
     manual_control();
-
     return 0;
 }
