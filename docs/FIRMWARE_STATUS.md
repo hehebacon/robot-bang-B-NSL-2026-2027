@@ -29,6 +29,15 @@ The guide says positive motor speed means forward, negative means reverse, and
 zero means stop. The core uses this convention. The physical left/right wiring
 must be checked on the actual robot.
 
+## Current `main.c` safety updates
+
+The Huna-style `main.c` was updated to:
+- give DOWN priority over LEFT/RIGHT in manual mode;
+- stop when no remote key is pressed, and require UP for forward motion;
+- check the software-estimated 60-second AUTO budget after blocking crossing sampling before issuing another movement command.
+
+These are source-level changes only. The deadline uses accumulated software delay estimates, not a verified hardware clock; long or undocumented blocking calls could make it inaccurate. Confirm behavior and motor polarity on a safely lifted robot, then test on the actual course. The file still relies on undocumented/unverified sensor mapping and Huna API behavior, so it is not certified as competition-ready.
+
 ## Build and test on a development computer
 
 Requirements: CMake 3.16+ and a C++17 compiler.
