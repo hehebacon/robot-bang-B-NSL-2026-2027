@@ -138,9 +138,10 @@ int main(void)
              * chính vạch đó là vạch ngang lần 2 ở đầu giai đoạn kế tiếp.
              */
             while (all_three_black()) {
-                stop_motors();
+                drive_forward();
                 delay(0, 0, 0, 10);
             }
+            stop_motors();
             break;
         }
 
