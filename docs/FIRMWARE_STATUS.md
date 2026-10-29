@@ -38,6 +38,14 @@ The Huna-style `main.c` was updated to:
 
 These are source-level changes only. The deadline uses accumulated software delay estimates, not a verified hardware clock; long or undocumented blocking calls could make it inaccurate. Confirm behavior and motor polarity on a safely lifted robot, then test on the actual course. The file still relies on undocumented/unverified sensor mapping and Huna API behavior, so it is not certified as competition-ready.
 
+## Recent verification work
+
+- Expanded host tests for line steering, first-crossing timing, second-crossing remote transition, all five remote commands, reset behavior, and unsigned millisecond-counter wrap.
+- Added a GitHub Actions workflow at `.github/workflows/host-tests.yml` to configure/build with CMake and run CTest on pushes, pull requests, and manual dispatch.
+- The host test executable was compiled locally with `g++ -std=c++17 -Wall -Wextra -Wpedantic` against the portable controller logic, and the test run passed.
+
+This does **not** validate `main.c` against the proprietary Huna environment or prove the physical robot is safe/competition-ready. The Huna SDK/header and board details are not present as buildable local dependencies in this repository view. Treat CI as a portable-logic regression check only.
+
 ## Build and test on a development computer
 
 Requirements: CMake 3.16+ and a C++17 compiler.
