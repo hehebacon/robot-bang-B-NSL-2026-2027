@@ -38,11 +38,48 @@
 #define CROSSING_MAX_MS       1250
 #define LOST_SEARCH_MS         120
 #define LOOP_DELAY_MS            2
+#define LEARN_STRAIGHT_TICKS    20
+#define SPEED_MIN                2
+#define SPEED_MAX                5
 
 #define STAGE_FIRST              0
 #define STAGE_SECOND             1
 
 static int last_turn = 0; /* -1 = left, +1 = right, 0 = unknown */
+
+/*
+ * Lightweight online adaptation (RAM only, resets on power-up):
+ * - Stable center-only readings gradually permit a higher speed.
+ * - Turn patterns immediately lower the learned speed.
+ * - Line loss drops speed to the safe minimum.
+ * This is not route learning and is not saved between runs.
+ */
+static int learned_speed = SPEED_MEDIUM;
+static unsigned int straight_ticks = 0;
+
+static void learn_straight_speed(void)
+{
+    if (straight_ticks < LEARN_STRAIGHT_TICKS) {
+        ++straight_ticks;
+    } else if (learned_speed < SPEED_MAX) {
+        ++learned_speed;
+        straight_ticks = 0;
+    }
+}
+
+static void learn_turn_speed(int severity)
+{
+    straight_ticks = 0;
+    if (learned_speed > severity) {
+        learned_speed = severity;
+    }
+}
+
+static void learn_line_lost(void)
+{
+    straight_ticks = 0;
+    learned_speed = SPEED_MIN;
+}
 
 static void stop_drive(void)
 {
@@ -91,28 +128,34 @@ static void follow_line_adaptive(void)
     if (left && center && right) {
         stop_drive(); /* The stage controller handles crossings. */
     } else if (left && center) {
+        learn_turn_speed(SPEED_MEDIUM);
         LMotor_1(0);
-        RMotor_1(SPEED_MEDIUM);
+        RMotor_1(learned_speed);
         last_turn = -1;
     } else if (center && right) {
-        LMotor_1(SPEED_MEDIUM);
+        learn_turn_speed(SPEED_MEDIUM);
+        LMotor_1(learned_speed);
         RMotor_1(0);
         last_turn = 1;
     } else if (left) {
-        /* Sharp left: slower correction. */
+        /* Sharp left: slow down before correcting. */
+        learn_turn_speed(SPEED_TIGHT);
         LMotor_1(0);
-        RMotor_1(SPEED_TIGHT);
+        RMotor_1(learned_speed);
         last_turn = -1;
     } else if (right) {
-        /* Sharp right: slower correction. */
-        LMotor_1(SPEED_TIGHT);
+        /* Sharp right: slow down before correcting. */
+        learn_turn_speed(SPEED_TIGHT);
+        LMotor_1(learned_speed);
         RMotor_1(0);
         last_turn = 1;
     } else if (center) {
-        forward_at(SPEED_STRAIGHT);
+        learn_straight_speed();
+        forward_at(learned_speed);
     } else {
         /* Search briefly in the last known direction, then stop if still lost. */
         unsigned int elapsed = 0;
+        learn_line_lost();
 
         while (elapsed < LOST_SEARCH_MS) {
             if (black(1) || black(2) || black(3)) {
