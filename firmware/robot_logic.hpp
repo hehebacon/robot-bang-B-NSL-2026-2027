@@ -68,10 +68,10 @@ class Controller {
     // turn left; right=line -> turn right. Combined adjacent sensors handle
     // right-angle corners. These are signed motor commands, not GPIO values.
     if (in.ir_left_black && in.ir_center_black) {
-      return drive(config_.forward_speed, -config_.turn_speed);
+      return drive(-config_.turn_speed, config_.forward_speed);
     }
     if (in.ir_center_black && in.ir_right_black) {
-      return drive(-config_.turn_speed, config_.forward_speed);
+      return drive(config_.forward_speed, -config_.turn_speed);
     }
     if (in.ir_center_black) {
       return drive(config_.forward_speed, config_.forward_speed);
