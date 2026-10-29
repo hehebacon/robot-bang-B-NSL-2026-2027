@@ -87,13 +87,13 @@ static void manual_control(void)
             LMotor_1(-MOTOR_SPEED);
             RMotor_1(-MOTOR_SPEED);
         }
-        else if (rc(LEFT_KEY) == TRUE) {
-            LMotor_1(-MOTOR_SPEED);
-            RMotor_1(MOTOR_SPEED);
-        }
         else if (rc(RIGHT_KEY) == TRUE) {
             LMotor_1(MOTOR_SPEED);
-            RMotor_1(-MOTOR_SPEED);
+            RMotor_1(0);
+        }
+        else if (rc(LEFT_KEY) == TRUE) {
+            LMotor_1(0);
+            RMotor_1(MOTOR_SPEED);
         }
         else {
             /* OFF_KEY hoặc không có phím: dừng. */
