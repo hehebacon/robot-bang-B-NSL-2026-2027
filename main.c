@@ -302,6 +302,17 @@ int main(void)
         }
 
         if (all_black() && crossing_stable()) {
+            /* crossing_stable() contains blocking delays; enforce the AUTO
+             * deadline immediately afterward, before issuing any new motion. */
+            if (!manual_started && auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
+                auto_timed_out = 1;
+                stop_drive();
+                for (;;) {
+                    stop_drive();
+                    delay(0, 0, 0, 100);
+                }
+            }
+
             stop_drive();
 
             if (stage == STAGE_FIRST) {
@@ -321,6 +332,16 @@ int main(void)
                 manual_remote_mode();
             }
         } else {
+            /* If the crossing sampler consumed the remaining AUTO budget,
+             * do not issue another line-follow command. */
+            if (!manual_started && auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
+                auto_timed_out = 1;
+                stop_drive();
+                for (;;) {
+                    stop_drive();
+                    delay(0, 0, 0, 100);
+                }
+            }
             follow_line_adaptive();
         }
 
