@@ -1,21 +1,20 @@
 /*
  * Huna / E-Robot V1.4 — Bảng B
- * AUTO chặng 1 -> giao điểm 1 -> AUTO chặng 2 -> MANUAL.
+ * AUTO chặng 1 -> qua giao điểm 1 -> AUTO chặng 2 -> MANUAL.
  *
- * Quy ước lấy từ hướng dẫn Bảng B:
- * - IR đen/vạch: ir(pin, 0, NONE) == TRUE.
- * - IR1 đen: rẽ trái; IR2 đen: đi thẳng; IR3 đen: rẽ phải.
- * - IR1+IR2: trái; IR2+IR3: phải.
- * - Cả ba IR đen: nhận diện giao điểm.
+ * Theo hướng dẫn Bảng B và source Huna người dùng cung cấp:
+ * ir(sensor, 0, NONE) == TRUE được dùng làm trạng thái vạch đen.
+ * IR1 = trái, IR2 = giữa, IR3 = phải là giả định cần xác nhận trên robot.
  *
- * Chưa xác minh trên phần cứng thật. Cần tinh chỉnh tốc độ và thời gian
- * chạy qua giao điểm theo robot/sân thực tế.
+ * Thanh gạt gắn cố định, không có lệnh servo trong chương trình này.
+ * Tốc độ/thời gian qua giao điểm là giá trị khởi đầu, chưa test phần cứng.
  */
 #include "functions_codes.h"
 
 #define MOTOR_SPEED 5
+#define TURN_SPEED 5
 #define CROSSING_DRIVE_MS 250
-#define CROSSING_CLEAR_TIMEOUT_TICKS 500 /* 500 x 10 ms = 5 s */
+#define CROSSING_CLEAR_TIMEOUT_TICKS 500 /* 500 * 10 ms = 5 s */
 
 static void stop_motors(void)
 {
@@ -23,60 +22,61 @@ static void stop_motors(void)
     RMotor_1(0);
 }
 
-/* Theo tài liệu Huna: trạng thái NONE ở ngưỡng 0 là vạch đen. */
-static unsigned char sees_black(unsigned char sensor)
+static unsigned char line_black(unsigned char sensor)
 {
     return (ir(sensor, 0, NONE) == TRUE);
 }
 
 static unsigned char all_three_black(void)
 {
-    return (sees_black(1) && sees_black(2) && sees_black(3));
+    return (line_black(1) && line_black(2) && line_black(3));
 }
 
 /*
- * Điều khiển line theo vị trí vạch:
- * IR1 ở trái, IR2 ở giữa, IR3 ở phải.
- * Rẽ trái: motor trái lùi, motor phải tiến.
- * Rẽ phải: motor trái tiến, motor phải lùi.
+ * Signed motor commands:
+ * left turn  = left motor reverse, right motor forward.
+ * right turn = left motor forward, right motor reverse.
+ * Verify actual motor orientation before running on the course.
  */
 static void follow_line(void)
 {
-    unsigned char left_black = sees_black(1);
-    unsigned char center_black = sees_black(2);
-    unsigned char right_black = sees_black(3);
+    unsigned char left = line_black(1);
+    unsigned char center = line_black(2);
+    unsigned char right = line_black(3);
 
-    if (left_black && center_black && right_black) {
-        /* Giao điểm được xử lý bởi state machine trong main(). */
+    if (left && center && right) {
+        /* Crossing is handled by the AUTO stage state machine. */
         stop_motors();
     }
-    else if (left_black && center_black) {
-        LMotor_1(-MOTOR_SPEED);
+    else if (left && center) {
+        /* Left + center: bias/turn left. */
+        LMotor_1(-TURN_SPEED);
         RMotor_1(MOTOR_SPEED);
     }
-    else if (center_black && right_black) {
+    else if (center && right) {
+        /* Center + right: bias/turn right. */
         LMotor_1(MOTOR_SPEED);
-        RMotor_1(-MOTOR_SPEED);
+        RMotor_1(-TURN_SPEED);
     }
-    else if (left_black) {
-        LMotor_1(-MOTOR_SPEED);
+    else if (left) {
+        LMotor_1(-TURN_SPEED);
         RMotor_1(MOTOR_SPEED);
     }
-    else if (center_black) {
+    else if (center) {
         LMotor_1(MOTOR_SPEED);
         RMotor_1(MOTOR_SPEED);
     }
-    else if (right_black) {
+    else if (right) {
         LMotor_1(MOTOR_SPEED);
-        RMotor_1(-MOTOR_SPEED);
+        RMotor_1(-TURN_SPEED);
     }
     else {
-        /* Mất line / tổ hợp chưa được định nghĩa: dừng an toàn. */
+        /* No sensor detects the line: stop rather than drive blindly. */
         stop_motors();
     }
 }
 
-static void manual_control(void)
+static void remote_control(void)
 {
     for (;;) {
         if (rc(UP_KEY) == TRUE) {
@@ -87,24 +87,29 @@ static void manual_control(void)
             LMotor_1(-MOTOR_SPEED);
             RMotor_1(-MOTOR_SPEED);
         }
-        else if (rc(RIGHT_KEY) == TRUE) {
-            LMotor_1(MOTOR_SPEED);
-            RMotor_1(0);
-        }
         else if (rc(LEFT_KEY) == TRUE) {
-            LMotor_1(0);
+            LMotor_1(-TURN_SPEED);
             RMotor_1(MOTOR_SPEED);
         }
+        else if (rc(RIGHT_KEY) == TRUE) {
+            LMotor_1(MOTOR_SPEED);
+            RMotor_1(-TURN_SPEED);
+        }
         else {
-            /* OFF_KEY hoặc không có phím: dừng. */
+            /* OFF_KEY or no recognized key: stop. */
             stop_motors();
         }
     }
 }
 
-static void wait_until_crossing_clears(void)
+/* Move forward off the first crossing; fail stopped if it never clears. */
+static void clear_first_crossing(void)
 {
     unsigned int ticks = 0;
+
+    LMotor_1(MOTOR_SPEED);
+    RMotor_1(MOTOR_SPEED);
+    delay(0, 0, 0, CROSSING_DRIVE_MS);
 
     while (all_three_black() && ticks < CROSSING_CLEAR_TIMEOUT_TICKS) {
         LMotor_1(MOTOR_SPEED);
@@ -114,13 +119,13 @@ static void wait_until_crossing_clears(void)
     }
 
     if (all_three_black()) {
-        /* Không thoát được vùng giao điểm: không tự chạy tiếp mù. */
         stop_motors();
         for (;;) {
             stop_motors();
             delay(0, 0, 0, 100);
         }
     }
+    stop_motors();
 }
 
 int main(void)
@@ -128,31 +133,26 @@ int main(void)
     mcu_initialization();
     stop_motors();
 
-    /* AUTO chặng 1: dò line tới giao điểm thứ nhất. */
+    /* AUTO stage 1: line-follow until the first all-black crossing. */
     for (;;) {
         if (all_three_black()) {
-            LMotor_1(MOTOR_SPEED);
-            RMotor_1(MOTOR_SPEED);
-            delay(0, 0, 0, CROSSING_DRIVE_MS);
-            wait_until_crossing_clears();
-            stop_motors();
+            clear_first_crossing();
             break;
         }
-
         follow_line();
     }
 
-    /* AUTO chặng 2: giao điểm tiếp theo thì dừng và chuyển MANUAL. */
+    /* AUTO stage 2: follow the line until the next all-black crossing. */
     for (;;) {
         if (all_three_black()) {
             stop_motors();
             delay(0, 0, 0, 250);
             break;
         }
-
         follow_line();
     }
 
-    manual_control();
+    /* MANUAL: remote control; release/no key means stop. */
+    remote_control();
     return 0;
 }
