@@ -17,6 +17,7 @@
  * <bits/stdc++.h> is a GNU C++ header, not valid for this Huna C firmware.
  * Do not add it here; this file uses functions_codes.h.
  */
+#include <stdio.h>
 #include "functions_codes.h"
 
 #define SPEED_STRAIGHT          8
