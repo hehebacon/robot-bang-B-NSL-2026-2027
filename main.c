@@ -326,6 +326,18 @@ int main(void)
             } else {
                 stop_drive();
                 delay(0, 0, 0, 250);
+                auto_account_delay(250);
+
+                /* The settling delay is part of Part 1. Do not enter remote
+                 * control if it consumed the remaining AUTO time budget. */
+                if (auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
+                    auto_timed_out = 1;
+                    for (;;) {
+                        stop_drive();
+                        delay(0, 0, 0, 100);
+                    }
+                }
+
                 current_speed = 0.0f;
                 target_speed = 0.0f;
                 manual_started = 1;
