@@ -15,18 +15,15 @@
 
 This is CONTROL LOGIC, not a board-ready firmware image. The slide deck names
 E-Robot V1.4 and a Huna mainboard, and describes MAKE/DOWNLOAD in that software.
-It does not identify the exact MCU, motor-driver interface, sensor pin numbers,
-remote receiver/API, or C++ library names. Therefore this repository deliberately
-does not invent GPIO assignments or claim compatibility with an unverified
-Arduino/AVR board.
+The user supplied a Huna API header named `functions_codes.h` and a sample program. A board-oriented example is now in `firmware/huna_main.c`. The exact MCU, physical sensor placement, and real sensor polarity still have not been independently verified; no GPIO assignments are needed in this API-level example.
 
-A board-specific adapter still needs to:
-1. read the three IR sensors and normalize their polarity to true = black;
-2. read the remote key and map it to robot_b::RemoteKey;
-3. call Controller::update() with a millisecond clock;
-4. translate signed left/right motor commands to the actual Huna motor-driver API;
-5. confirm whether the guide's black-line None signal corresponds to the
-   sensor module's electrical HIGH or LOW.
+The Huna example currently assumes:
+1. `ir(1, 0, NONE) == TRUE` means the left sensor detects black, likewise sensors 2 and 3 for center/right;
+2. `rc(UP_KEY/DOWN_KEY/LEFT_KEY/RIGHT_KEY) == TRUE` reports the corresponding remote key;
+3. `LMotor_1()` and `RMotor_1()` accept signed speed values as described by the supplied header;
+4. motor speed 5 and crossing delay 250 ms are starting values, not measured settings.
+
+Verify sensor placement/polarity and turning direction on the real robot before track use. The separate portable C++ core still uses a board adapter for integration with `robot_logic.hpp`.
 
 The guide says positive motor speed means forward, negative means reverse, and
 zero means stop. The core uses this convention. The physical left/right wiring
