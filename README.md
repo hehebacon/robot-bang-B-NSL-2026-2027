@@ -17,6 +17,7 @@ Only the following hardware is currently confirmed:
 - 2 × servo motors
 - 5 × infrared sensors
 - 1 × main controller board (exact model not yet identified)
+- 1 × 9 V battery (battery type/chemistry and condition not yet confirmed)
 
 Do not assume extra motors, servos, sensors, motor drivers, batteries, or boards are available. Record any required-but-missing parts separately before purchasing.
 
@@ -35,14 +36,15 @@ The two servos are not required for basic line following; only include them if a
 - Exact IR sensor module and output type: unknown.
 - Track line width, surface, and exact course layout: not verified.
 - Official competition rules and scoring conditions: must be checked.
-- Battery and power arrangement: not verified.
+- The user reports a 9 V battery is available, but its type/chemistry, condition, connector, and usable current are not verified.
+- Power compatibility is not established: a common rectangular 9 V battery may be unable to supply the peak current required by DC motors and servos. Check the board/motor specifications and power requirements before connecting it; do not connect the battery directly to unknown pins or assume it can safely power every component.
 
 Do not invent pin assignments, electrical ratings, sensor behavior, dimensions, test results, or competition requirements.
 
 ## Development priorities
 
 1. Obtain and document the official rules and scoring conditions.
-2. Identify the main board, sensors, motor driver, and power source from labels/photos or documentation without modifying the circuits.
+2. Identify the main board, sensors, motor driver, and 9 V battery type from labels/photos or documentation without modifying the circuits; verify current and voltage requirements before powering the robot.
 3. Confirm whether differential-drive line following is allowed.
 4. Design the exterior/chassis within 250 × 250 × 250 mm around the confirmed hardware.
 5. Implement sensor calibration and line-following logic only within the permitted rules and existing electronics.
