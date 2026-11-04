@@ -1,365 +1,131 @@
 /*
  * BANG B - HUNA E-ROBOT V1.4
- * main.c - Huna C firmware (not desktop C++).
+ * Compatibility-focused firmware entry point.
  *
- * AUTO (Part 1): follow the line for at most 60 seconds. The existing course
- * logic expects a first crossing and a second crossing; the second enters MANUAL.
- * If the 60-second limit expires first, stop and latch safely (do not assume
- * the rules allow starting Part 2 after an AUTO timeout).
- * MANUAL (Part 2): only remote-control inputs move the robot; line following
- * and autonomous obstacle pushing are disabled in this state.
+ * This version intentionally avoids float arithmetic, stdio, large helper
+ * structures, and software ramp calculations. It uses only the Huna API
+ * already present in the supplied working example.
  *
- * Hardware assumptions still requiring verification:
- * - IR1=left, IR2=center, IR3=right.
- * - ir(n, 0, NONE)==TRUE means that sensor sees black.
- * - Huna motor API accepts integer speeds in the configured range.
- * - Crossing patterns and timing match the actual course.
+ * Sensor convention copied from the supplied example:
+ *   ir(n, 0, NONE) == TRUE means sensor n detects black.
  *
- * <bits/stdc++.h> is a GNU C++ header, not valid for this Huna C firmware.
- * Do not add it here; this file uses functions_codes.h.
+ * IMPORTANT:
+ * - Verify sensor order and motor direction on the real robot.
+ * - The first all-black crossing advances to stage 2.
+ * - The second all-black crossing stops and enters remote control.
+ * - This source simplification cannot by itself prove/fix a USB/bootloader
+ *   transfer stall at 50%; it removes source-level compatibility variables.
  */
-#include <stdio.h>
 #include "functions_codes.h"
 
-#define SPEED_STRAIGHT          8
-#define SPEED_MEDIUM            5
-#define SPEED_TIGHT              3
-#define CROSSING_SPEED           3
-#define CROSSING_PASS_MS       180
-#define CROSSING_SAMPLE_MS       5
-#define CROSSING_STABLE_SAMPLES  3
-#define CROSSING_MAX_MS       1250
-#define LOST_SEARCH_MS         120
-#define LOOP_DELAY_MS            2
-#define RAMP_INTERVAL_MS        20
-#define SPEED_STEP             0.1f
-#define SPEED_MIN              0.0f
-#define SPEED_MAX              8.0f
-#define AUTO_TIME_LIMIT_MS   60000U
+#define DRIVE_SPEED 5
+#define TURN_SPEED  5
+#define CROSSING_MS 250
 
-#define STAGE_FIRST              0
-#define STAGE_SECOND             1
-
-static int last_turn = 0; /* -1 = left, +1 = right, 0 = unknown */
-static float current_speed = 0.0f;
-static float target_speed = 0.0f;
-static unsigned int ramp_elapsed_ms = 0;
-static unsigned int auto_elapsed_ms = 0;
-static unsigned char auto_timed_out = 0;
-static unsigned char manual_started = 0;
-
-static void stop_drive(void)
+static void motors_stop(void)
 {
     LMotor_1(0);
     RMotor_1(0);
 }
 
-/* Account for known blocking delays while Part 1 is active. This is a
- * software estimate, not a hardware clock; confirm timing on the real board. */
-static void auto_account_delay(unsigned int ms)
-{
-    if (!auto_timed_out && auto_elapsed_ms < AUTO_TIME_LIMIT_MS) {
-        if (ms >= AUTO_TIME_LIMIT_MS - auto_elapsed_ms) {
-            auto_elapsed_ms = AUTO_TIME_LIMIT_MS;
-        } else {
-            auto_elapsed_ms += ms;
-        }
-    }
-}
-
-/* Move current_speed toward target_speed by 0.1 every 20 ms. */
-static void update_speed_ramp(void)
-{
-    ramp_elapsed_ms += LOOP_DELAY_MS;
-    if (ramp_elapsed_ms < RAMP_INTERVAL_MS) {
-        return;
-    }
-    ramp_elapsed_ms = 0;
-
-    if (current_speed < target_speed) {
-        current_speed += SPEED_STEP;
-        if (current_speed > target_speed) current_speed = target_speed;
-    } else if (current_speed > target_speed) {
-        current_speed -= SPEED_STEP;
-        if (current_speed < target_speed) current_speed = target_speed;
-    }
-
-    if (current_speed < SPEED_MIN) current_speed = SPEED_MIN;
-    if (current_speed > SPEED_MAX) current_speed = SPEED_MAX;
-}
-
-/* Huna motor commands appear integer-based; float ramp is rounded down here. */
-static int motor_speed(void)
-{
-    return (int)(current_speed + 0.0001f);
-}
-
-static void drive_forward_ramped(void)
-{
-    int speed = motor_speed();
-    LMotor_1(speed);
-    RMotor_1(speed);
-}
-
-static unsigned char black(unsigned char sensor)
+static unsigned char sensor_black(unsigned char sensor)
 {
     return (ir(sensor, 0, NONE) == TRUE);
 }
 
-static unsigned char all_black(void)
+static unsigned char crossing_detected(void)
 {
-    return (black(1) && black(2) && black(3));
+    return (sensor_black(1) &&
+            sensor_black(2) &&
+            sensor_black(3));
 }
 
-static unsigned char crossing_stable(void)
+/* Three-sensor line tracking. No floating-point calculations or timers. */
+static void line_follow(void)
 {
-    unsigned char count = 0;
-    unsigned char i;
+    unsigned char left;
+    unsigned char center;
+    unsigned char right;
 
-    for (i = 0; i < CROSSING_STABLE_SAMPLES; ++i) {
-        if (all_black()) ++count;
-        delay(0, 0, 0, CROSSING_SAMPLE_MS);
-        auto_account_delay(CROSSING_SAMPLE_MS);
-    }
-    return (count == CROSSING_STABLE_SAMPLES);
-}
-
-/* Set the speed target from the current 3-sensor pattern, then ramp toward it. */
-static void follow_line_adaptive(void)
-{
-    unsigned char left = black(1);
-    unsigned char center = black(2);
-    unsigned char right = black(3);
-    int speed;
+    left = sensor_black(1);
+    center = sensor_black(2);
+    right = sensor_black(3);
 
     if (left && center && right) {
-        target_speed = 0.0f; /* crossing controller handles this pattern */
-        update_speed_ramp();
-        stop_drive();
-        return;
-    }
-
-    if (left && center) {
-        target_speed = SPEED_MEDIUM;
-        last_turn = -1;
+        motors_stop();
+    } else if (left && center) {
+        LMotor_1(-TURN_SPEED);
+        RMotor_1(TURN_SPEED);
     } else if (center && right) {
-        target_speed = SPEED_MEDIUM;
-        last_turn = 1;
+        LMotor_1(TURN_SPEED);
+        RMotor_1(-TURN_SPEED);
     } else if (left) {
-        target_speed = SPEED_TIGHT;
-        last_turn = -1;
+        LMotor_1(-TURN_SPEED);
+        RMotor_1(TURN_SPEED);
     } else if (right) {
-        target_speed = SPEED_TIGHT;
-        last_turn = 1;
+        LMotor_1(TURN_SPEED);
+        RMotor_1(-TURN_SPEED);
     } else if (center) {
-        target_speed = SPEED_STRAIGHT;
+        LMotor_1(DRIVE_SPEED);
+        RMotor_1(DRIVE_SPEED);
     } else {
-        unsigned int elapsed = 0;
-        target_speed = 0.0f;
-        update_speed_ramp();
-        stop_drive();
-
-        /* Search briefly at low speed in the last known direction. */
-        while (elapsed < LOST_SEARCH_MS) {
-            if (black(1) || black(2) || black(3)) return;
-
-            speed = motor_speed();
-            if (speed > SPEED_TIGHT) speed = SPEED_TIGHT;
-            if (last_turn < 0) {
-                LMotor_1(0);
-                RMotor_1(speed);
-            } else if (last_turn > 0) {
-                LMotor_1(speed);
-                RMotor_1(0);
-            } else {
-                stop_drive();
-                return;
-            }
-            delay(0, 0, 0, LOOP_DELAY_MS);
-            auto_account_delay(LOOP_DELAY_MS);
-            elapsed += LOOP_DELAY_MS;
-        }
-        stop_drive();
-        return;
-    }
-
-    update_speed_ramp();
-    speed = motor_speed();
-
-    if (left && center) {
-        LMotor_1(0);
-        RMotor_1(speed);
-    } else if (center && right) {
-        LMotor_1(speed);
-        RMotor_1(0);
-    } else if (left) {
-        LMotor_1(0);
-        RMotor_1(speed);
-    } else if (right) {
-        LMotor_1(speed);
-        RMotor_1(0);
-    } else {
-        drive_forward_ramped();
+        /* Lost line: stop rather than keep the previous motor command. */
+        motors_stop();
     }
 }
 
-/* Fixed low-speed crossing pass; timings must be calibrated on the real course. */
-static unsigned char clear_first_crossing(void)
-{
-    unsigned int elapsed = 0;
-
-    LMotor_1(CROSSING_SPEED);
-    RMotor_1(CROSSING_SPEED);
-    delay(0, 0, 0, CROSSING_PASS_MS);
-    auto_account_delay(CROSSING_PASS_MS);
-    elapsed += CROSSING_PASS_MS;
-
-    while (elapsed < CROSSING_MAX_MS) {
-        if (!all_black()) {
-            stop_drive();
-            delay(0, 0, 0, 40);
-            auto_account_delay(40);
-            current_speed = 0.0f;
-            target_speed = 0.0f;
-            return 1;
-        }
-        LMotor_1(CROSSING_SPEED);
-        RMotor_1(CROSSING_SPEED);
-        delay(0, 0, 0, CROSSING_SAMPLE_MS);
-        auto_account_delay(CROSSING_SAMPLE_MS);
-        elapsed += CROSSING_SAMPLE_MS;
-    }
-
-    stop_drive();
-    current_speed = 0.0f;
-    target_speed = 0.0f;
-    return 0;
-}
-
-static void manual_remote_mode(void)
+static void remote_control(void)
 {
     for (;;) {
-        if (rc(DOWN_KEY) == TRUE) {
-            /* DOWN has priority: brake/decelerate, never reverse. */
-            target_speed = 0.0f;
-        } else if (rc(UP_KEY) == TRUE) {
-            target_speed = SPEED_STRAIGHT;
-        } else if (rc(LEFT_KEY) == TRUE || rc(RIGHT_KEY) == TRUE) {
-            /* Preserve steering-only input; turn at a moderate target speed. */
-            target_speed = SPEED_MEDIUM;
-        } else {
-            /* Releasing all controls lets the robot ramp down to a stop. */
-            target_speed = 0.0f;
-        }
-
-        update_speed_ramp();
-
-        /* Brake has priority over steering. Previously, LEFT/RIGHT could still
-         * command a turn while DOWN was held, contradicting the stop behavior. */
-        if (rc(DOWN_KEY) == TRUE) {
-            stop_drive();
-            current_speed = 0.0f;
-            target_speed = 0.0f;
-            ramp_elapsed_ms = 0;
+        if (rc(UP_KEY) == TRUE) {
+            LMotor_1(DRIVE_SPEED);
+            RMotor_1(DRIVE_SPEED);
+        } else if (rc(DOWN_KEY) == TRUE) {
+            LMotor_1(-DRIVE_SPEED);
+            RMotor_1(-DRIVE_SPEED);
         } else if (rc(LEFT_KEY) == TRUE) {
-            LMotor_1(0);
-            RMotor_1(motor_speed());
+            LMotor_1(-TURN_SPEED);
+            RMotor_1(TURN_SPEED);
         } else if (rc(RIGHT_KEY) == TRUE) {
-            LMotor_1(motor_speed());
-            RMotor_1(0);
-        } else if (rc(UP_KEY) == TRUE) {
-            drive_forward_ramped();
+            LMotor_1(TURN_SPEED);
+            RMotor_1(-TURN_SPEED);
         } else {
-            /* No input means stop, rather than continuing straight while
-             * the speed ramp decelerates. */
-            stop_drive();
-            current_speed = 0.0f;
-            target_speed = 0.0f;
-            ramp_elapsed_ms = 0;
+            /* No key (including OFF) means stop. */
+            motors_stop();
         }
-
-        delay(0, 0, 0, LOOP_DELAY_MS);
     }
 }
 
 int main(void)
 {
-    unsigned char stage = STAGE_FIRST;
-
     mcu_initialization();
-    stop_drive();
+    motors_stop();
 
+    /* Stage 1: follow the line until the first crossing. */
     for (;;) {
-        /* A timeout stops the robot and stays stopped. Do not silently switch
-         * to manual after a failed/late Part 1; the official rule must define it. */
-        if (!manual_started && auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
-            auto_timed_out = 1;
-            stop_drive();
-            for (;;) {
-                stop_drive();
-                delay(0, 0, 0, 100);
-            }
+        if (crossing_detected()) {
+            LMotor_1(DRIVE_SPEED);
+            RMotor_1(DRIVE_SPEED);
+            delay(0, 0, 0, CROSSING_MS);
+            motors_stop();
+            break;
         }
-
-        if (all_black() && crossing_stable()) {
-            /* crossing_stable() contains blocking delays; enforce the AUTO
-             * deadline immediately afterward, before issuing any new motion. */
-            if (!manual_started && auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
-                auto_timed_out = 1;
-                stop_drive();
-                for (;;) {
-                    stop_drive();
-                    delay(0, 0, 0, 100);
-                }
-            }
-
-            stop_drive();
-
-            if (stage == STAGE_FIRST) {
-                if (!clear_first_crossing()) {
-                    for (;;) {
-                        stop_drive();
-                        delay(0, 0, 0, 100);
-                    }
-                }
-                stage = STAGE_SECOND;
-            } else {
-                stop_drive();
-                delay(0, 0, 0, 250);
-                auto_account_delay(250);
-
-                /* The settling delay is part of Part 1. Do not enter remote
-                 * control if it consumed the remaining AUTO time budget. */
-                if (auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
-                    auto_timed_out = 1;
-                    for (;;) {
-                        stop_drive();
-                        delay(0, 0, 0, 100);
-                    }
-                }
-
-                current_speed = 0.0f;
-                target_speed = 0.0f;
-                manual_started = 1;
-                manual_remote_mode();
-            }
-        } else {
-            /* If the crossing sampler consumed the remaining AUTO budget,
-             * do not issue another line-follow command. */
-            if (!manual_started && auto_elapsed_ms >= AUTO_TIME_LIMIT_MS) {
-                auto_timed_out = 1;
-                stop_drive();
-                for (;;) {
-                    stop_drive();
-                    delay(0, 0, 0, 100);
-                }
-            }
-            follow_line_adaptive();
-        }
-
-        delay(0, 0, 0, LOOP_DELAY_MS);
-        if (!manual_started) auto_account_delay(LOOP_DELAY_MS);
+        line_follow();
     }
+
+    /* Stage 2: follow the line until the second crossing. */
+    for (;;) {
+        if (crossing_detected()) {
+            motors_stop();
+            delay(0, 0, 0, CROSSING_MS);
+            motors_stop();
+            break;
+        }
+        line_follow();
+    }
+
+    /* Part 2: remote-control mode. */
+    remote_control();
 
     return 0;
 }
