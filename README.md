@@ -37,9 +37,9 @@ The two servos are not required for basic line following; only include them if a
 - Huna / E-Robot example using `functions_codes.h`: [firmware/huna_main.c](firmware/huna_main.c)
 - Hardware integration notes: [docs/FIRMWARE_STATUS.md](docs/FIRMWARE_STATUS.md)
 
-The portable core models three-IR line following, a timed first crossing, a second crossing that stops and switches to remote control, and remote forward/back/left/right/off behavior. The Huna example uses the API declarations in the supplied `functions_codes.h` (`ir`, `rc`, `LMotor_1`, `RMotor_1`, `delay`, and `mcu_initialization`).
+The portable core models three-IR line following, a timed first crossing, a second crossing that stops and switches to remote control, and remote forward/back/left/right/off behavior. The Huna entry point in [main.c](main.c) now uses integer PID-style feedback from the three digital IR channels demonstrated in the supplied sample. It computes a weighted line-position error, then adjusts left/right motor speeds from proportional, integral, and derivative terms. It uses the API calls shown in the sample (`ir`, `rc`, `LMotor_1`, `RMotor_1`, `delay`, and `mcu_initialization`).
 
-**Important:** `firmware/huna_main.c` is an integration example, not a verified downloadable firmware image. It assumes sensors 1/2/3 are left/center/right and that `ir(sensor, 0, NONE) == TRUE` means black, matching the user's sample. Motor speed is initially set to 5 and crossing delay to 250 ms. These values and turning behavior must be tested on the actual robot in a safe, lifted-wheel test before track use. The host tests do not compile against E-Robot or test physical hardware.
+**Important:** `main.c` assumes sensors 1/2/3 are left/center/right and that `ir(sensor, 0, NONE) == TRUE` means black, matching the user's sample. The PID reads digital states, not analog sensor intensity, so its error resolution is limited by three channels. The user has reported five physical IR sensors, but channels 4/5 and their API/wiring order have not been verified; this code deliberately does not guess them. Base speed and PID gains are starting values and require safe, lifted-wheel checks followed by track tuning. The host tests do not compile against E-Robot or test physical hardware.
 
 To run the host tests with CMake 3.16+ and a C++17 compiler:
 
