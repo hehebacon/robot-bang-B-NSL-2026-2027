@@ -63,3 +63,37 @@ Config defaults are conservative starting values, not measured hardware
 settings. Adjust forward_speed, turn_speed, and first_cross_drive_ms on a
 safe test track. The all-sensors-black pattern is used by the supplied guide as
 the crossing condition; verify the actual sensor placement and polarity first.
+
+
+## Current Huna PID entry point (2026-11-04)
+
+The repository root `main.c` has been simplified to an integer-only PID-style
+line follower using the three digital IR channels demonstrated by the user's
+working sample. It calculates a weighted lateral error from left/center/right
+sensor states and combines proportional, integral, and derivative terms to
+adjust the two motor speeds. It avoids floating-point arithmetic and standard
+library dependencies.
+
+The current code assumes:
+- IR1/IR2/IR3 are physically left/center/right;
+- `ir(n, 0, NONE) == TRUE` indicates black, as in the supplied sample;
+- `LMotor_1` and `RMotor_1` accept signed speed commands in the range used
+  by the sample;
+- positive/negative motor directions correspond to the assumed left/right
+  wheel orientation.
+
+The robot is reported to have five physical IR sensors, but the supplied sample
+only demonstrates channels 1–3. The code does not call channels 4 or 5 until
+their numbering, placement, and API behavior are confirmed. Therefore this is
+a three-channel digital PID approximation, not five-sensor analog PID.
+
+The first all-black event passes the crossing and waits until the three
+channels no longer all report black before resuming line following. The second
+all-black event stops and enters remote control. This prevents the same
+wide crossing from immediately being counted twice.
+
+**Not yet verified:** compilation in Huna E-Robot V1.4, Download to the actual
+mainboard, physical motor polarity, sensor order/polarity, PID gains, crossing
+timing, and the reported 50% transfer stall. A successful source commit is not
+evidence that the E-Robot transfer problem is fixed. Test with the drive wheels
+safely lifted before placing the robot on the course.
