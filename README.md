@@ -34,7 +34,8 @@ The two servos are not required for basic line following; only include them if a
 - Portable C++17 controller core: [firmware/robot_logic.hpp](firmware/robot_logic.hpp)
 - Host-side tests: [tests/robot_logic_test.cpp](tests/robot_logic_test.cpp)
 - Build and test: [CMakeLists.txt](CMakeLists.txt)
-- Huna / E-Robot example using `functions_codes.h`: [firmware/huna_main.c](firmware/huna_main.c)
+- Current Huna / E-Robot two-sensor entry point using `functions_codes.h`: [main.c](main.c)
+- Older three-sensor Huna reference (not the current two-sensor target): [firmware/huna_main.c](firmware/huna_main.c)
 - Hardware integration notes: [docs/FIRMWARE_STATUS.md](docs/FIRMWARE_STATUS.md)
 
 The portable core and host tests remain a separate three-input reference model. The Huna entry point in [main.c](main.c) has been changed to a **two-IR differential-drive** controller: it reads IR1 and IR3, drives the two rear wheels independently, ramps straight-line speed gradually, slows both wheels for a detected side deviation, and keeps a 200 ms low-speed recovery period after a curve. The two front wheels are treated as passive.
