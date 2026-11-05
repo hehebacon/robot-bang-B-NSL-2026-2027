@@ -112,3 +112,29 @@ environment and the sensor truth table and motor directions are checked with
 the drive wheels safely lifted. The previous three-sensor PID description is
 superseded for the root `main.c`; the portable C++ three-input reference model
 and its host tests are unchanged and are not a validation of this Huna file.
+
+## Manual-mode stability update (2026-11-05)
+
+The repository-root `main.c` now keeps manual mode latched in its infinite
+remote-control loop. It has no software time limit or distance limit and does
+not intentionally return to the line-following state. Manual motor targets are
+limited to magnitude 7, with a two-step steering mix and a one-step-per-30-ms
+slew limiter to soften starts, stops, and direction changes.
+
+This is a firmware-side mitigation only. It cannot guarantee that a controller
+will not reset when the two DC motors and controller share the same six-cell
+AA battery pack. Battery chemistry, cell condition, holder/contact resistance,
+motor stall/current draw, board input limits, and the existing power wiring
+are not confirmed. A reset can still occur from supply sag or a wiring/contact
+fault. Do not treat the slew limiter as proof that the power system is adequate.
+
+The remote input still calls `rc()` once for each key. Simultaneous-key
+reporting and the exact behavior of the proprietary Huna API remain
+unverified because `functions_codes.h` and a buildable Huna SDK are not
+present in this repository. Therefore diagonal/combined-key behavior is not
+claimed as fixed.
+
+**Verification boundary:** the GitHub source update is confirmed. No Huna
+E-Robot compile, DOWNLOAD, or physical boot was possible from this repository
+connection. The portable C++ host tests do not compile or validate this
+Huna-specific `main.c`.
