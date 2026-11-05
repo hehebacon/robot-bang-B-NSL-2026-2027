@@ -40,6 +40,9 @@
 static int straight_speed = STRAIGHT_MIN_SPEED;
 static int ramp_elapsed_ms = 0;
 static int curve_recovery_ticks = 0;
+static int remote_left_current = 0;
+static int remote_right_current = 0;
+static int remote_ramp_elapsed_ms = 0;
 
 static void motors_stop(void)
 {
@@ -117,14 +120,23 @@ static void follow_line(unsigned char left_black,
     }
 }
 
-#define REMOTE_TURN_DELTA 3
-#define REMOTE_MAX_SPEED 10
+#define REMOTE_TURN_DELTA 2
+#define REMOTE_MAX_SPEED 7
+#define REMOTE_RAMP_INTERVAL_MS 30
 
 static int clamp_remote_speed(int speed)
 {
     if (speed > REMOTE_MAX_SPEED) return REMOTE_MAX_SPEED;
     if (speed < -REMOTE_MAX_SPEED) return -REMOTE_MAX_SPEED;
     return speed;
+}
+
+/* Limit the rate of change to soften motor start/stop and direction changes. */
+static int approach_remote_target(int current, int target)
+{
+    if (current < target) return current + 1;
+    if (current > target) return current - 1;
+    return current;
 }
 
 /*
@@ -136,6 +148,14 @@ static int clamp_remote_speed(int speed)
  */
 static void remote_control(void)
 {
+    int target_left = 0;
+    int target_right = 0;
+
+    /* Manual mode is intentionally latched: there is no timeout or Auto exit. */
+    remote_left_current = 0;
+    remote_right_current = 0;
+    remote_ramp_elapsed_ms = 0;
+
     for (;;) {
         unsigned char up = (rc(UP_KEY) == TRUE);
         unsigned char down = (rc(DOWN_KEY) == TRUE);
@@ -143,8 +163,6 @@ static void remote_control(void)
         unsigned char right = (rc(RIGHT_KEY) == TRUE);
         int base_speed = 0;
         int turn_delta = 0;
-        int left_speed;
-        int right_speed;
 
         if (up && !down) {
             base_speed = STRAIGHT_MAX_SPEED;
@@ -158,15 +176,21 @@ static void remote_control(void)
             turn_delta = -REMOTE_TURN_DELTA;
         }
 
-        if (base_speed == 0 && turn_delta == 0) {
-            motors_stop();
-        } else {
-            left_speed = clamp_remote_speed(base_speed - turn_delta);
-            right_speed = clamp_remote_speed(base_speed + turn_delta);
-            LMotor_1(left_speed);
-            RMotor_1(right_speed);
+        target_left = clamp_remote_speed(base_speed - turn_delta);
+        target_right = clamp_remote_speed(base_speed + turn_delta);
+
+        /* Change each motor command by at most one speed step per 30 ms. */
+        remote_ramp_elapsed_ms += LOOP_DELAY_MS;
+        if (remote_ramp_elapsed_ms >= REMOTE_RAMP_INTERVAL_MS) {
+            remote_ramp_elapsed_ms = 0;
+            remote_left_current =
+                approach_remote_target(remote_left_current, target_left);
+            remote_right_current =
+                approach_remote_target(remote_right_current, target_right);
         }
 
+        LMotor_1(remote_left_current);
+        RMotor_1(remote_right_current);
         delay(0, 0, 0, LOOP_DELAY_MS);
     }
 }
