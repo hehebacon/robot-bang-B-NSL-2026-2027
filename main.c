@@ -117,24 +117,56 @@ static void follow_line(unsigned char left_black,
     }
 }
 
+#define REMOTE_TURN_DELTA 3
+#define REMOTE_MAX_SPEED 10
+
+static int clamp_remote_speed(int speed)
+{
+    if (speed > REMOTE_MAX_SPEED) return REMOTE_MAX_SPEED;
+    if (speed < -REMOTE_MAX_SPEED) return -REMOTE_MAX_SPEED;
+    return speed;
+}
+
+/*
+ * Remote control supports combined direction + steering:
+ * UP + LEFT/RIGHT = forward arc; DOWN + LEFT/RIGHT = reverse arc.
+ * LEFT/RIGHT alone pivots in place; UP/DOWN alone drives straight.
+ * This reads each key independently, so simultaneous-key reporting by
+ * the remote/controller must be supported by the Huna rc() API.
+ */
 static void remote_control(void)
 {
     for (;;) {
-        if (rc(UP_KEY) == TRUE) {
-            LMotor_1(STRAIGHT_MAX_SPEED);
-            RMotor_1(STRAIGHT_MAX_SPEED);
-        } else if (rc(DOWN_KEY) == TRUE) {
-            LMotor_1(-STRAIGHT_MAX_SPEED);
-            RMotor_1(-STRAIGHT_MAX_SPEED);
-        } else if (rc(LEFT_KEY) == TRUE) {
-            LMotor_1(-CURVE_OUTER_SPEED);
-            RMotor_1(CURVE_OUTER_SPEED);
-        } else if (rc(RIGHT_KEY) == TRUE) {
-            LMotor_1(CURVE_OUTER_SPEED);
-            RMotor_1(-CURVE_OUTER_SPEED);
-        } else {
-            motors_stop();
+        unsigned char up = (rc(UP_KEY) == TRUE);
+        unsigned char down = (rc(DOWN_KEY) == TRUE);
+        unsigned char left = (rc(LEFT_KEY) == TRUE);
+        unsigned char right = (rc(RIGHT_KEY) == TRUE);
+        int base_speed = 0;
+        int turn_delta = 0;
+        int left_speed;
+        int right_speed;
+
+        if (up && !down) {
+            base_speed = STRAIGHT_MAX_SPEED;
+        } else if (down && !up) {
+            base_speed = -STRAIGHT_MAX_SPEED;
         }
+
+        if (left && !right) {
+            turn_delta = REMOTE_TURN_DELTA;
+        } else if (right && !left) {
+            turn_delta = -REMOTE_TURN_DELTA;
+        }
+
+        if (base_speed == 0 && turn_delta == 0) {
+            motors_stop();
+        } else {
+            left_speed = clamp_remote_speed(base_speed - turn_delta);
+            right_speed = clamp_remote_speed(base_speed + turn_delta);
+            LMotor_1(left_speed);
+            RMotor_1(right_speed);
+        }
+
         delay(0, 0, 0, LOOP_DELAY_MS);
     }
 }
