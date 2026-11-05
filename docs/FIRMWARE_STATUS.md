@@ -88,7 +88,16 @@ Adaptive behavior in the source:
   before ramping up;
 - both sensors active for three consecutive samples: treated as a crossing;
   first crossing is passed, second crossing stops and enters remote control;
-- remote neutral/no key stops both motors.
+- remote neutral/no key stops both motors;
+- remote input now mixes direction and steering: UP+LEFT/RIGHT drives a
+  forward arc, DOWN+LEFT/RIGHT drives a reverse arc, LEFT/RIGHT alone pivots
+  in place, and UP/DOWN alone drives straight. Conflicting keys cancel the
+  corresponding direction/steering axis.
+
+The mixed-key behavior assumes the Huna `rc()` API can report multiple
+simultaneously pressed keys. This has not yet been confirmed on the physical
+remote/controller. If `rc()` only reports one key at a time, diagonal/arc
+commands will not work and the input method must be adapted.
 
 Two binary sensors do not measure an exact curve angle; the code uses a
 conservative left/right deviation classification. The speed constants are
