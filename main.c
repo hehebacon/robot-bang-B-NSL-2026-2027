@@ -1,40 +1,45 @@
 /*
  * BANG B - HUNA E-ROBOT V1.4
- * Three-sensor line follower with integer PID and adaptive speed.
+ * Two-IR differential-drive line follower with gradual speed control.
  *
- * Uses only Huna API calls demonstrated in the user's sample.
- * Sensor convention: ir(n, 0, NONE) == TRUE means black line.
- * Sensor 1 = left, 2 = center, 3 = right (verify physical placement).
+ * Hardware model supplied by the user:
+ * - rear left/right wheels are driven by LMotor_1 / RMotor_1;
+ * - front wheels are passive;
+ * - two ground-facing IR sensors are used.
  *
- * This is a three-digital-sensor controller, not analog-position PID.
- * Channels 4/5 are not used until their API and wiring are verified.
- * This source does not prove/fix a USB/bootloader transfer stall.
+ * Sensor channels follow the user's earlier sample:
+ *   IR1 = left, IR3 = right; IR2 is not read.
+ *   ir(channel, 950, SENSE) == TRUE is assumed to mean black line.
+ *
+ * IMPORTANT SENSOR-GEOMETRY ASSUMPTION:
+ * The two sensors must straddle the normal line: neither sees black when
+ * centered, one sees black when the robot drifts, and both see black at a
+ * wide crossing. Confirm this on the actual chassis before track use.
+ *
+ * This file uses only the Huna API names already shown in the user's sample.
+ * It does not prove compatibility with the proprietary E-Robot compiler,
+ * successful DOWNLOAD, or successful boot on the physical board.
  */
 #include "functions_codes.h"
 
-#define STRAIGHT_SPEED       7
-#define MILD_CURVE_SPEED    5
-#define SHARP_CURVE_SPEED   3
-#define MAX_MOTOR_SPEED    10
-#define LOOP_DELAY_MS      10
-#define CROSSING_DRIVE_MS 250
-#define CURVE_HOLD_MS     200
-#define CURVE_HOLD_TICKS (CURVE_HOLD_MS / LOOP_DELAY_MS)
+#define LOOP_DELAY_MS       10
+#define CROSSING_DRIVE_MS  250
+#define CROSSING_CONFIRM_COUNT 3
 
-/* Integer PID gains; initial values still require physical tuning. */
-#define KP_NUM              6
-#define KD_NUM              2
-#define KI_NUM              1
-#define PID_SCALE        1000
-#define INTEGRAL_LIMIT   1000
+#define STRAIGHT_MIN_SPEED  3
+#define STRAIGHT_MAX_SPEED  7
+#define CURVE_INNER_SPEED   1
+#define CURVE_OUTER_SPEED   4
+#define SPEED_RAMP_INTERVAL_MS 50
+#define CURVE_RECOVERY_MS  200
+#define CURVE_RECOVERY_TICKS (CURVE_RECOVERY_MS / LOOP_DELAY_MS)
 
-#define STAGE_FIRST          0
-#define STAGE_SECOND         1
+#define STAGE_FIRST  0
+#define STAGE_SECOND 1
 
-static int previous_error = 0;
-static int integral_error = 0;
-static int curve_hold_ticks = 0;
-static int remembered_curve_speed = STRAIGHT_SPEED;
+static int straight_speed = STRAIGHT_MIN_SPEED;
+static int ramp_elapsed_ms = 0;
+static int curve_recovery_ticks = 0;
 
 static void motors_stop(void)
 {
@@ -42,159 +47,91 @@ static void motors_stop(void)
     RMotor_1(0);
 }
 
-static unsigned char sensor_black(unsigned char sensor)
+static unsigned char left_on_black(void)
 {
-    return (ir(sensor, 0, NONE) == TRUE);
+    return (ir(1, 950, SENSE) == TRUE);
 }
 
-static unsigned char crossing_detected(void)
+static unsigned char right_on_black(void)
 {
-    return (sensor_black(1) &&
-            sensor_black(2) &&
-            sensor_black(3));
+    return (ir(3, 950, SENSE) == TRUE);
 }
 
-static int clamp_motor(int speed)
+static void reset_speed_state(void)
 {
-    if (speed > MAX_MOTOR_SPEED) return MAX_MOTOR_SPEED;
-    if (speed < -MAX_MOTOR_SPEED) return -MAX_MOTOR_SPEED;
-    return speed;
+    straight_speed = STRAIGHT_MIN_SPEED;
+    ramp_elapsed_ms = 0;
+    curve_recovery_ticks = 0;
 }
 
-/*
- * Estimate lateral error from three digital sensors:
- * left only=-1000, left+center=-500, center=0,
- * center+right=+500, right only=+1000.
- * No active sensor returns 2000 (line lost).
- */
-static int read_line_error(void)
+static void drive_straight_gradually(void)
 {
-    unsigned char left = sensor_black(1);
-    unsigned char center = sensor_black(2);
-    unsigned char right = sensor_black(3);
-    int weighted_sum = 0;
-    int active_count = 0;
-
-    if (left) {
-        weighted_sum -= 1000;
-        ++active_count;
-    }
-    if (center) {
-        ++active_count;
-    }
-    if (right) {
-        weighted_sum += 1000;
-        ++active_count;
-    }
-
-    if (active_count == 0) return 2000;
-    return weighted_sum / active_count;
-}
-
-/*
- * Adaptive speed:
- * - center sensor only: straight, accelerate to STRAIGHT_SPEED
- * - adjacent pair: mild curve, use MILD_CURVE_SPEED
- * - outer sensor only: sharp curve, use SHARP_CURVE_SPEED
- * Keep the last curve speed for 200 ms after the line becomes centered,
- * avoiding an immediate speed jump at the curve exit.
- */
-static int choose_adaptive_base_speed(int error)
-{
-    int magnitude = error;
-
-    if (magnitude < 0) magnitude = -magnitude;
-
-    if (error != 0) {
-        curve_hold_ticks = CURVE_HOLD_TICKS;
-
-        if (magnitude >= 1000) {
-            remembered_curve_speed = SHARP_CURVE_SPEED;
-        } else {
-            remembered_curve_speed = MILD_CURVE_SPEED;
-        }
-        return remembered_curve_speed;
-    }
-
-    if (curve_hold_ticks > 0) {
-        --curve_hold_ticks;
-        return remembered_curve_speed;
-    }
-
-    remembered_curve_speed = STRAIGHT_SPEED;
-    return STRAIGHT_SPEED;
-}
-
-/* Calculate bounded PID correction and mix it into left/right motor speeds. */
-static void pid_line_follow(void)
-{
-    int error = read_line_error();
-    int base_speed;
-    int derivative;
-    int proportional_term;
-    int integral_term;
-    int derivative_term;
-    int correction;
-    int left_speed;
-    int right_speed;
-
-    if (error == 2000) {
-        /* Stop instead of driving blindly when all sensors lose the line. */
-        motors_stop();
-        integral_error = 0;
-        previous_error = 0;
-        curve_hold_ticks = 0;
-        remembered_curve_speed = STRAIGHT_SPEED;
+    if (curve_recovery_ticks > 0) {
+        --curve_recovery_ticks;
+        LMotor_1(STRAIGHT_MIN_SPEED);
+        RMotor_1(STRAIGHT_MIN_SPEED);
         return;
     }
 
-    base_speed = choose_adaptive_base_speed(error);
-
-    integral_error += error;
-    if (integral_error > INTEGRAL_LIMIT) {
-        integral_error = INTEGRAL_LIMIT;
-    } else if (integral_error < -INTEGRAL_LIMIT) {
-        integral_error = -INTEGRAL_LIMIT;
+    ramp_elapsed_ms += LOOP_DELAY_MS;
+    if (ramp_elapsed_ms >= SPEED_RAMP_INTERVAL_MS) {
+        ramp_elapsed_ms = 0;
+        if (straight_speed < STRAIGHT_MAX_SPEED) {
+            ++straight_speed;
+        }
     }
 
-    derivative = error - previous_error;
-    proportional_term = (KP_NUM * error) / PID_SCALE;
-    integral_term = (KI_NUM * integral_error) / PID_SCALE;
-    derivative_term = (KD_NUM * derivative) / PID_SCALE;
-    correction = proportional_term + integral_term + derivative_term;
-
-    /* Negative error: line is left. Positive error: line is right. */
-    left_speed = clamp_motor(base_speed + correction);
-    right_speed = clamp_motor(base_speed - correction);
-
-    LMotor_1(left_speed);
-    RMotor_1(right_speed);
-    previous_error = error;
+    LMotor_1(straight_speed);
+    RMotor_1(straight_speed);
 }
 
-static void reset_pid(void)
+/*
+ * With sensors straddling the line:
+ * - neither sees black: centered, accelerate gradually;
+ * - left sees black: line is under left sensor, steer left;
+ * - right sees black: line is under right sensor, steer right;
+ * - both see black: handled by crossing state machine.
+ *
+ * Binary sensors cannot measure an exact corner angle. A detected side
+ * deviation is treated conservatively as a corner and both wheels slow down.
+ */
+static void follow_line(unsigned char left_black,
+                        unsigned char right_black)
 {
-    previous_error = 0;
-    integral_error = 0;
-    curve_hold_ticks = 0;
-    remembered_curve_speed = STRAIGHT_SPEED;
+    if (!left_black && !right_black) {
+        drive_straight_gradually();
+    } else if (left_black && !right_black) {
+        straight_speed = STRAIGHT_MIN_SPEED;
+        ramp_elapsed_ms = 0;
+        curve_recovery_ticks = CURVE_RECOVERY_TICKS;
+        LMotor_1(CURVE_INNER_SPEED);
+        RMotor_1(CURVE_OUTER_SPEED);
+    } else if (!left_black && right_black) {
+        straight_speed = STRAIGHT_MIN_SPEED;
+        ramp_elapsed_ms = 0;
+        curve_recovery_ticks = CURVE_RECOVERY_TICKS;
+        LMotor_1(CURVE_OUTER_SPEED);
+        RMotor_1(CURVE_INNER_SPEED);
+    } else {
+        motors_stop();
+    }
 }
 
 static void remote_control(void)
 {
     for (;;) {
         if (rc(UP_KEY) == TRUE) {
-            LMotor_1(STRAIGHT_SPEED);
-            RMotor_1(STRAIGHT_SPEED);
+            LMotor_1(STRAIGHT_MAX_SPEED);
+            RMotor_1(STRAIGHT_MAX_SPEED);
         } else if (rc(DOWN_KEY) == TRUE) {
-            LMotor_1(-STRAIGHT_SPEED);
-            RMotor_1(-STRAIGHT_SPEED);
+            LMotor_1(-STRAIGHT_MAX_SPEED);
+            RMotor_1(-STRAIGHT_MAX_SPEED);
         } else if (rc(LEFT_KEY) == TRUE) {
-            LMotor_1(-STRAIGHT_SPEED);
-            RMotor_1(STRAIGHT_SPEED);
+            LMotor_1(-CURVE_OUTER_SPEED);
+            RMotor_1(CURVE_OUTER_SPEED);
         } else if (rc(RIGHT_KEY) == TRUE) {
-            LMotor_1(STRAIGHT_SPEED);
-            RMotor_1(-STRAIGHT_SPEED);
+            LMotor_1(CURVE_OUTER_SPEED);
+            RMotor_1(-CURVE_OUTER_SPEED);
         } else {
             motors_stop();
         }
@@ -205,29 +142,44 @@ static void remote_control(void)
 int main(void)
 {
     unsigned char stage = STAGE_FIRST;
+    unsigned char crossing_count = 0;
 
     mcu_initialization();
     motors_stop();
-    reset_pid();
+    reset_speed_state();
 
     for (;;) {
-        if (crossing_detected()) {
+        unsigned char left_black = left_on_black();
+        unsigned char right_black = right_on_black();
+
+        /* Debounce the two-sensor wide-black crossing pattern. */
+        if (left_black && right_black) {
+            if (crossing_count < CROSSING_CONFIRM_COUNT) {
+                ++crossing_count;
+            }
+        } else {
+            crossing_count = 0;
+        }
+
+        if (crossing_count >= CROSSING_CONFIRM_COUNT) {
             motors_stop();
-            reset_pid();
+            reset_speed_state();
 
             if (stage == STAGE_FIRST) {
-                LMotor_1(STRAIGHT_SPEED);
-                RMotor_1(STRAIGHT_SPEED);
+                /* Pass the first crossing, then wait for both sensors to clear. */
+                LMotor_1(STRAIGHT_MIN_SPEED);
+                RMotor_1(STRAIGHT_MIN_SPEED);
                 delay(0, 0, 0, CROSSING_DRIVE_MS);
 
-                while (crossing_detected()) {
-                    LMotor_1(STRAIGHT_SPEED);
-                    RMotor_1(STRAIGHT_SPEED);
+                while (left_on_black() && right_on_black()) {
+                    LMotor_1(STRAIGHT_MIN_SPEED);
+                    RMotor_1(STRAIGHT_MIN_SPEED);
                     delay(0, 0, 0, LOOP_DELAY_MS);
                 }
 
                 motors_stop();
-                reset_pid();
+                reset_speed_state();
+                crossing_count = 0;
                 stage = STAGE_SECOND;
             } else {
                 motors_stop();
@@ -235,7 +187,7 @@ int main(void)
                 remote_control();
             }
         } else {
-            pid_line_follow();
+            follow_line(left_black, right_black);
             delay(0, 0, 0, LOOP_DELAY_MS);
         }
     }
