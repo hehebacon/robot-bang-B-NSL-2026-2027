@@ -65,35 +65,41 @@ safe test track. The all-sensors-black pattern is used by the supplied guide as
 the crossing condition; verify the actual sensor placement and polarity first.
 
 
-## Current Huna PID entry point (2026-11-04)
+## Current Huna two-sensor entry point (2026-11-05)
 
-The repository root `main.c` has been simplified to an integer-only PID-style
-line follower using the three digital IR channels demonstrated by the user's
-working sample. It calculates a weighted lateral error from left/center/right
-sensor states and combines proportional, integral, and derivative terms to
-adjust the two motor speeds. It avoids floating-point arithmetic and standard
-library dependencies.
+The repository-root `main.c` now models the user's clarified chassis:
+- two rear driven wheels controlled independently by `LMotor_1` and
+  `RMotor_1`;
+- two passive front wheels;
+- two ground-facing IR sensors, read as IR1 and IR3 based on the user's
+  earlier sample; IR2 is not read.
 
-The current code assumes:
-- IR1/IR2/IR3 are physically left/center/right;
-- `ir(n, 0, NONE) == TRUE` indicates black, as in the supplied sample;
-- `LMotor_1` and `RMotor_1` accept signed speed commands in the range used
-  by the sample;
-- positive/negative motor directions correspond to the assumed left/right
-  wheel orientation.
+The Huna entry point calls `ir(1, 950, SENSE)` and
+`ir(3, 950, SENSE)`. It assumes TRUE means black and assumes the sensors
+straddle the normal track line: neither sees black when centered, one sees
+black during a side deviation, and both see black at a wide crossing. If the
+actual sensor placement/polarity differs, the truth table must be adjusted
+before the robot is run.
 
-The robot is reported to have five physical IR sensors, but the supplied sample
-only demonstrates channels 1–3. The code does not call channels 4 or 5 until
-their numbering, placement, and API behavior are confirmed. Therefore this is
-a three-channel digital PID approximation, not five-sensor analog PID.
+Adaptive behavior in the source:
+- centered: straight speed ramps from 3 to 7, one speed step every 50 ms;
+- left/right deviation: the inner rear wheel runs at 1 and the outer at 4;
+- after a deviation clears: straight motion remains at low speed for 200 ms
+  before ramping up;
+- both sensors active for three consecutive samples: treated as a crossing;
+  first crossing is passed, second crossing stops and enters remote control;
+- remote neutral/no key stops both motors.
 
-The first all-black event passes the crossing and waits until the three
-channels no longer all report black before resuming line following. The second
-all-black event stops and enters remote control. This prevents the same
-wide crossing from immediately being counted twice.
+Two binary sensors do not measure an exact curve angle; the code uses a
+conservative left/right deviation classification. The speed constants are
+starting values and need physical tuning.
 
-**Not yet verified:** compilation in Huna E-Robot V1.4, Download to the actual
-mainboard, physical motor polarity, sensor order/polarity, PID gains, crossing
-timing, and the reported 50% transfer stall. A successful source commit is not
-evidence that the E-Robot transfer problem is fixed. Test with the drive wheels
-safely lifted before placing the robot on the course.
+**Boot/build status:** the MCU initialization call and Huna API function names
+remain from the existing entry point, but this file has NOT been compiled with
+the proprietary E-Robot V1.4 toolchain, downloaded to the actual controller,
+or boot-tested. A GitHub commit is not proof of successful compilation or boot.
+Do not put this version into a live run until it builds in the correct Huna
+environment and the sensor truth table and motor directions are checked with
+the drive wheels safely lifted. The previous three-sensor PID description is
+superseded for the root `main.c`; the portable C++ three-input reference model
+and its host tests are unchanged and are not a validation of this Huna file.
