@@ -15,7 +15,7 @@ Only the following hardware is currently confirmed:
 
 - 2 × DC motors
 - 2 × servo motors
-- 5 × infrared sensors
+- 3 × infrared sensors (front row: left / center / right, as confirmed by the user)
 - 1 × main controller board (exact model not yet identified)
 - 1 × 9 V battery (battery type/chemistry and condition not yet confirmed)
 
@@ -34,13 +34,13 @@ The two servos are not required for basic line following; only include them if a
 - Portable C++17 controller core: [firmware/robot_logic.hpp](firmware/robot_logic.hpp)
 - Host-side tests: [tests/robot_logic_test.cpp](tests/robot_logic_test.cpp)
 - Build and test: [CMakeLists.txt](CMakeLists.txt)
-- Current Huna / E-Robot two-sensor entry point using `functions_codes.h`: [main.c](main.c)
-- Older three-sensor Huna reference (not the current two-sensor target): [firmware/huna_main.c](firmware/huna_main.c)
+- Current Huna / E-Robot three-sensor entry point using `functions_codes.h`: [main.c](main.c)
+- Earlier three-sensor Huna reference: [firmware/huna_main.c](firmware/huna_main.c)
 - Hardware integration notes: [docs/FIRMWARE_STATUS.md](docs/FIRMWARE_STATUS.md)
 
-The portable core and host tests remain a separate three-input reference model. The Huna entry point in [main.c](main.c) now reads **three horizontal front IR sensors** (IR1=left, IR2=center, IR3=right) and independently controls the two rear drive motors; the front wheels are passive. It uses integer proportional steering: centered line drives straight, left/right sensor patterns adjust the two motor commands in opposite directions, and ambiguous/lost-line patterns stop the motors. The first confirmed all-three-black pattern is passed at low speed; the second enters the existing latched remote-control loop.
+The portable core and host tests remain a separate three-input reference model. The Huna entry point in [main.c](main.c) reads **three horizontal front IR sensors** (IR1=left, IR2=center, IR3=right) and independently controls the two rear drive motors; the front wheels are passive. The line controller now uses integer PD-style steering: it calculates line-position error and change from the previous sample, then reduces forward speed as the line moves away from the center. The first confirmed all-three-black pattern is passed at low speed; the second enters the latched remote-control loop. Manual mode gives DOWN priority, supports UP+LEFT/RIGHT arcs, uses the supplied one-wheel-forward LEFT/RIGHT mapping, and explicitly checks OFF_KEY.
 
-**Important assumptions and limits:** `main.c` calls `ir(channel, 950, SENSE)` and assumes TRUE means black. Confirm sensor order, polarity, threshold behavior, and motor direction on the real chassis before use. The correction is based on three binary sensor states, not measured wheel RPM; fixed left/right trim values remain at 100% until safely tuned. No forward obstacle/range sensor is installed, so this firmware cannot detect or autonomously avoid physical obstacles. This source change has not been compiled with the proprietary Huna E-Robot V1.4 toolchain, downloaded to the board, or boot-tested. The portable C++ tests do not validate this Huna entry point.
+**Important assumptions and limits:** `main.c` calls `ir(channel, 950, SENSE)` and assumes TRUE means black. Confirm sensor order, polarity, threshold behavior, and motor direction on the real chassis before use. The PD correction is based on three binary sensor states, not measured wheel RPM; fixed left/right trim values remain at 100% until safely tuned. It is an adaptive steering calculation, not closed-loop wheel-speed balancing. No forward obstacle/range sensor is installed, so this firmware cannot detect or autonomously avoid physical obstacles. This source change has not been compiled with the proprietary Huna E-Robot V1.4 toolchain, downloaded to the board, or boot-tested. The portable C++ tests do not validate this Huna entry point.
 
 To run the host tests with CMake 3.16+ and a C++17 compiler:
 
