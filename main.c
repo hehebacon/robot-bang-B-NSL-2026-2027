@@ -94,18 +94,6 @@ static unsigned char all_three_black(void)
 }
 
 /*
- * Integer proportional steering from the three horizontal sensors.
- * Assumed polarity: TRUE = black.
- *
- * 100 -> strong left correction; 110 -> gentle left correction
- * 010 -> straight; 011 -> gentle right correction; 001 -> strong right
- * 000 -> line lost: stop; 101 -> ambiguous split pattern: stop
- * 111 -> crossing: handled by the crossing state machine.
- *
- * Negative error means the line is to the robot's left. The left motor is
- * slowed and the right motor sped up; the reverse applies to right correction.
- */
-/*
  * Adaptive integer PD line controller.
  * Sensor position gives the error (-2..+2); change since the previous sample
  * adds derivative damping. Forward speed is reduced as the line moves away
