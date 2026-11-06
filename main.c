@@ -22,7 +22,7 @@
 #define SOFT_TURN_OUTER_SPEED       4
 #define SOFT_TURN_INNER_SPEED       1
 #define PIVOT_OUTER_SPEED           3
-#define PIVOT_INNER_REVERSE        -2
+#define PIVOT_INNER_STOP            0
 #define CROSSING_CONFIRM_COUNT      4
 #define CROSSING_CLEAR_GUARD        100000UL
 #define CROSSING_PASS_SPEED         2
@@ -84,7 +84,7 @@ static unsigned char all_three_black(void)
  * 110 / 011: curve -> slow inner wheel, keep outer wheel moving.
  * 100 / 001: sharp corner -> pivot toward the detected line until center
  *            sensor reacquires it.
- * 000: line temporarily lost -> search in the last known turn direction.
+ * 000: line temporarily lost -> search in the last known turn direction without reversing either wheel.
  * 101: both outer sensors active -> treat as a broad/ambiguous patch and
  *      creep straight; do not make an arbitrary turn.
  *
@@ -107,7 +107,7 @@ static void follow_line(unsigned char left_black,
             line_lost_count = 0;
             set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
         } else {
-            set_motor_speeds(PIVOT_INNER_REVERSE, PIVOT_OUTER_SPEED);
+            set_motor_speeds(PIVOT_INNER_STOP, PIVOT_OUTER_SPEED);
         }
         return;
     }
@@ -118,7 +118,7 @@ static void follow_line(unsigned char left_black,
             line_lost_count = 0;
             set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
         } else {
-            set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_REVERSE);
+            set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_STOP);
         }
         return;
     }
@@ -156,7 +156,7 @@ static void follow_line(unsigned char left_black,
         last_turn_direction = -1;
         corner_turn_direction = -1;
         line_lost_count = 0;
-        set_motor_speeds(PIVOT_INNER_REVERSE, PIVOT_OUTER_SPEED);
+        set_motor_speeds(PIVOT_INNER_STOP, PIVOT_OUTER_SPEED);
         return;
     }
 
@@ -164,7 +164,7 @@ static void follow_line(unsigned char left_black,
         last_turn_direction = 1;
         corner_turn_direction = 1;
         line_lost_count = 0;
-        set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_REVERSE);
+        set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_STOP);
         return;
     }
 
@@ -173,9 +173,9 @@ static void follow_line(unsigned char left_black,
         ++line_lost_count;
 
         if (last_turn_direction < 0) {
-            set_motor_speeds(PIVOT_INNER_REVERSE, PIVOT_OUTER_SPEED);
+            set_motor_speeds(PIVOT_INNER_STOP, PIVOT_OUTER_SPEED);
         } else if (last_turn_direction > 0) {
-            set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_REVERSE);
+            set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_STOP);
         } else {
             motors_stop();
         }
