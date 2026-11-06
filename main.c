@@ -9,7 +9,8 @@
  * - front wheels are passive.
  *
  * Sensor/API assumptions retained from the existing Huna entry point:
- *   ir(channel, 950, SENSE) == TRUE means black line.
+ *   ir(channel, 0, NONE) == TRUE means black line, following the comments
+ *   and IR example in the user's supplied E-Robot template.
  *   Positive motor speed means forward; zero means stop.
  * Verify these conventions on the real board before a track run.
  *
@@ -85,7 +86,7 @@ static void motors_stop(void)
 
 static unsigned char ir_black(unsigned char channel)
 {
-    return (ir(channel, 950, SENSE) == TRUE);
+    return (ir(channel, 0, NONE) == TRUE);
 }
 
 static unsigned char all_three_black(void)
