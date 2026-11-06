@@ -23,14 +23,16 @@
 #include "functions_codes.h"
 
 #define LOOP_DELAY_MS       10
-#define CROSSING_DRIVE_MS  250
-#define CROSSING_CONFIRM_COUNT 3
+#define CROSSING_DRIVE_MS  180
+#define CROSSING_CLEAR_TIMEOUT_MS 1500
+#define CROSSING_CONFIRM_COUNT 4
 
-#define STRAIGHT_MIN_SPEED  3
-#define STRAIGHT_MAX_SPEED  7
+/* Conservative common profile to reduce abrupt acceleration. */
+#define STRAIGHT_MIN_SPEED  2
+#define STRAIGHT_MAX_SPEED  5
 #define CURVE_INNER_SPEED   1
-#define CURVE_OUTER_SPEED   4
-#define SPEED_RAMP_INTERVAL_MS 50
+#define CURVE_OUTER_SPEED   3
+#define SPEED_RAMP_INTERVAL_MS 100
 #define CURVE_RECOVERY_MS  200
 #define CURVE_RECOVERY_TICKS (CURVE_RECOVERY_MS / LOOP_DELAY_MS)
 
@@ -121,7 +123,7 @@ static void follow_line(unsigned char left_black,
 }
 
 #define REMOTE_TURN_DELTA 2
-#define REMOTE_MAX_SPEED 7
+#define REMOTE_MAX_SPEED 5
 #define REMOTE_RAMP_INTERVAL_MS 30
 
 static int clamp_remote_speed(int speed)
@@ -222,15 +224,29 @@ int main(void)
             reset_speed_state();
 
             if (stage == STAGE_FIRST) {
-                /* Pass the first crossing, then wait for both sensors to clear. */
+                /* Cross briefly, then require the sensors to clear.
+                 * A bounded wait prevents a stuck sensor/wide patch from
+                 * keeping the robot driving forward forever. */
+                unsigned int clear_wait_ms = 0;
                 LMotor_1(STRAIGHT_MIN_SPEED);
                 RMotor_1(STRAIGHT_MIN_SPEED);
                 delay(0, 0, 0, CROSSING_DRIVE_MS);
 
-                while (left_on_black() && right_on_black()) {
+                while (left_on_black() && right_on_black() &&
+                       clear_wait_ms < CROSSING_CLEAR_TIMEOUT_MS) {
                     LMotor_1(STRAIGHT_MIN_SPEED);
                     RMotor_1(STRAIGHT_MIN_SPEED);
                     delay(0, 0, 0, LOOP_DELAY_MS);
+                    clear_wait_ms += LOOP_DELAY_MS;
+                }
+
+                if (clear_wait_ms >= CROSSING_CLEAR_TIMEOUT_MS &&
+                    left_on_black() && right_on_black()) {
+                    /* Fail stopped instead of driving indefinitely. */
+                    motors_stop();
+                    for (;;) {
+                        delay(0, 0, 0, 100);
+                    }
                 }
 
                 motors_stop();
