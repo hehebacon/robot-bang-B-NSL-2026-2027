@@ -28,9 +28,10 @@
 #define CROSSING_CLEAR_TIMEOUT_MS   1500
 #define CROSSING_CONFIRM_COUNT         4
 
-#define LINE_BASE_SPEED                3
 #define LINE_MAX_SPEED                 5
-#define LINE_CORRECTION_STEP           1
+#define LINE_MIN_SPEED                 1
+#define LINE_KP                        1
+#define LINE_KD                        1
 #define MOTOR_OUTPUT_LIMIT             5
 
 #define STAGE_FIRST                    0
@@ -43,6 +44,8 @@
 static int remote_left_current = 0;
 static int remote_right_current = 0;
 static int remote_ramp_elapsed_ms = 0;
+static int previous_line_error = 0;
+static unsigned char has_previous_line_error = 0;
 
 /*
  * Independent fixed trims compensate a stable left/right motor mismatch.
@@ -102,46 +105,63 @@ static unsigned char all_three_black(void)
  * Negative error means the line is to the robot's left. The left motor is
  * slowed and the right motor sped up; the reverse applies to right correction.
  */
+/*
+ * Adaptive integer PD line controller.
+ * Sensor position gives the error (-2..+2); change since the previous sample
+ * adds derivative damping. Forward speed is reduced as the line moves away
+ * from the center sensor. This is NOT wheel-RPM regulation: no encoders are
+ * confirmed, and binary sensors limit control precision.
+ */
 static void follow_line(unsigned char left_black,
                         unsigned char center_black,
                         unsigned char right_black)
 {
     int error = 0;
+    int derivative = 0;
+    int correction;
+    int base_speed;
     int left_command;
     int right_command;
+    int abs_error;
 
     if (left_black && center_black && right_black) {
+        has_previous_line_error = 0;
         motors_stop();
         return;
     }
-
     if (!left_black && !center_black && !right_black) {
+        has_previous_line_error = 0;
         motors_stop();
         return;
     }
-
     if (left_black && !center_black && right_black) {
+        has_previous_line_error = 0;
         motors_stop();
         return;
     }
 
-    if (left_black && center_black) {
-        error = -1;
-    } else if (left_black) {
-        error = -2;
-    } else if (center_black && right_black) {
-        error = 1;
-    } else if (right_black) {
-        error = 2;
-    } else if (center_black) {
-        error = 0;
+    if (left_black && center_black) error = -1;
+    else if (left_black) error = -2;
+    else if (center_black && right_black) error = 1;
+    else if (right_black) error = 2;
+    else error = 0;
+
+    if (has_previous_line_error) {
+        derivative = error - previous_line_error;
     }
+    previous_line_error = error;
+    has_previous_line_error = 1;
 
-    left_command = LINE_BASE_SPEED + error * LINE_CORRECTION_STEP;
-    right_command = LINE_BASE_SPEED - error * LINE_CORRECTION_STEP;
+    abs_error = (error < 0) ? -error : error;
+    base_speed = LINE_MAX_SPEED - abs_error;
+    if (base_speed < 2) base_speed = 2;
 
-    if (left_command < 1) left_command = 1;
-    if (right_command < 1) right_command = 1;
+    correction = (LINE_KP * error) + (LINE_KD * derivative);
+    left_command = base_speed + correction;
+    right_command = base_speed - correction;
+
+    if (left_command < LINE_MIN_SPEED) left_command = LINE_MIN_SPEED;
+    if (right_command < LINE_MIN_SPEED) right_command = LINE_MIN_SPEED;
     if (left_command > LINE_MAX_SPEED) left_command = LINE_MAX_SPEED;
     if (right_command > LINE_MAX_SPEED) right_command = LINE_MAX_SPEED;
 
@@ -169,6 +189,12 @@ static int approach_remote_target(int current, int target)
  * Simultaneous key reporting depends on the Huna rc() implementation and
  * still needs confirmation on the physical controller.
  */
+/*
+ * Manual mode stays latched. DOWN has priority over steering; UP enables
+ * forward motion and can combine with LEFT/RIGHT for an arc. LEFT or RIGHT
+ * alone use the supplied one-wheel-forward mapping. OFF_KEY and no-key both
+ * stop the motors.
+ */
 static void remote_control(void)
 {
     remote_left_current = 0;
@@ -180,25 +206,34 @@ static void remote_control(void)
         unsigned char down = (rc(DOWN_KEY) == TRUE);
         unsigned char left = (rc(LEFT_KEY) == TRUE);
         unsigned char right = (rc(RIGHT_KEY) == TRUE);
-        int base_speed = 0;
-        int turn_delta = 0;
-        int target_left;
-        int target_right;
+        unsigned char off = (rc(OFF_KEY) == TRUE);
+        int target_left = 0;
+        int target_right = 0;
 
-        if (up && !down) {
-            base_speed = LINE_MAX_SPEED;
-        } else if (down && !up) {
-            base_speed = -LINE_MAX_SPEED;
-        }
-
-        if (left && !right) {
-            turn_delta = REMOTE_TURN_DELTA;
+        if (off) {
+            target_left = 0;
+            target_right = 0;
+        } else if (down) {
+            target_left = -REMOTE_MAX_SPEED;
+            target_right = -REMOTE_MAX_SPEED;
+        } else if (up) {
+            target_left = REMOTE_MAX_SPEED;
+            target_right = REMOTE_MAX_SPEED;
+            if (left && !right) {
+                target_left -= REMOTE_TURN_DELTA;
+            } else if (right && !left) {
+                target_right -= REMOTE_TURN_DELTA;
+            }
+        } else if (left && !right) {
+            target_left = 0;
+            target_right = REMOTE_MAX_SPEED;
         } else if (right && !left) {
-            turn_delta = -REMOTE_TURN_DELTA;
+            target_left = REMOTE_MAX_SPEED;
+            target_right = 0;
         }
 
-        target_left = clamp_remote_speed(base_speed - turn_delta);
-        target_right = clamp_remote_speed(base_speed + turn_delta);
+        target_left = clamp_remote_speed(target_left);
+        target_right = clamp_remote_speed(target_right);
 
         remote_ramp_elapsed_ms += LOOP_DELAY_MS;
         if (remote_ramp_elapsed_ms >= REMOTE_RAMP_INTERVAL_MS) {
