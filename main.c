@@ -201,6 +201,9 @@ static void remote_control(void)
         if (off) {
             target_left = 0;
             target_right = 0;
+            remote_left_current = 0;
+            remote_right_current = 0;
+            remote_ramp_elapsed_ms = 0;
         } else if (down) {
             target_left = -REMOTE_MAX_SPEED;
             target_right = -REMOTE_MAX_SPEED;
@@ -223,13 +226,20 @@ static void remote_control(void)
         target_left = clamp_remote_speed(target_left);
         target_right = clamp_remote_speed(target_right);
 
-        remote_ramp_elapsed_ms += LOOP_DELAY_MS;
-        if (remote_ramp_elapsed_ms >= REMOTE_RAMP_INTERVAL_MS) {
+        if (!off && !up && !down && !left && !right) {
+            /* No key means immediate stop, not a slow ramp-down. */
+            remote_left_current = 0;
+            remote_right_current = 0;
             remote_ramp_elapsed_ms = 0;
-            remote_left_current =
-                approach_remote_target(remote_left_current, target_left);
-            remote_right_current =
-                approach_remote_target(remote_right_current, target_right);
+        } else {
+            remote_ramp_elapsed_ms += LOOP_DELAY_MS;
+            if (remote_ramp_elapsed_ms >= REMOTE_RAMP_INTERVAL_MS) {
+                remote_ramp_elapsed_ms = 0;
+                remote_left_current =
+                    approach_remote_target(remote_left_current, target_left);
+                remote_right_current =
+                    approach_remote_target(remote_right_current, target_right);
+            }
         }
 
         set_motor_speeds(remote_left_current, remote_right_current);
