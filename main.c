@@ -26,6 +26,9 @@
 #define CROSSING_CONFIRM_COUNT      4
 #define CROSSING_CLEAR_GUARD        100000UL
 #define CROSSING_PASS_SPEED         2
+#define CORNER_TURN_LIMIT           2500UL
+#define LINE_SEARCH_LIMIT           500UL
+#define CORNER_OUTER_SPEED          2
 
 #define REMOTE_MAX_SPEED            5
 #define REMOTE_TURN_DELTA           2
@@ -41,6 +44,7 @@ static int last_turn_direction = 0;
 /* 0 = normal tracking, -1 = committed left 90-degree turn, +1 = right. */
 static int corner_turn_direction = 0;
 static unsigned long line_lost_count = 0;
+static unsigned long corner_turn_count = 0;
 
 static int clamp_motor_speed(int speed)
 {
@@ -105,9 +109,15 @@ static void follow_line(unsigned char left_black,
         if (center_black) {
             corner_turn_direction = 0;
             line_lost_count = 0;
+            corner_turn_count = 0;
             set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
+        } else if (++corner_turn_count >= CORNER_TURN_LIMIT) {
+            motors_stop();
+            corner_turn_direction = 0;
+            last_turn_direction = 0;
+            corner_turn_count = 0;
         } else {
-            set_motor_speeds(PIVOT_INNER_STOP, PIVOT_OUTER_SPEED);
+            set_motor_speeds(PIVOT_INNER_STOP, CORNER_OUTER_SPEED);
         }
         return;
     }
@@ -117,8 +127,13 @@ static void follow_line(unsigned char left_black,
             corner_turn_direction = 0;
             line_lost_count = 0;
             set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
+        } else if (++corner_turn_count >= CORNER_TURN_LIMIT) {
+            motors_stop();
+            corner_turn_direction = 0;
+            last_turn_direction = 0;
+            corner_turn_count = 0;
         } else {
-            set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_STOP);
+            set_motor_speeds(CORNER_OUTER_SPEED, PIVOT_INNER_STOP);
         }
         return;
     }
@@ -155,16 +170,18 @@ static void follow_line(unsigned char left_black,
     if (left_black && !center_black && !right_black) {
         last_turn_direction = -1;
         corner_turn_direction = -1;
+        corner_turn_count = 0;
         line_lost_count = 0;
-        set_motor_speeds(PIVOT_INNER_STOP, PIVOT_OUTER_SPEED);
+        set_motor_speeds(PIVOT_INNER_STOP, CORNER_OUTER_SPEED);
         return;
     }
 
     if (!left_black && !center_black && right_black) {
         last_turn_direction = 1;
         corner_turn_direction = 1;
+        corner_turn_count = 0;
         line_lost_count = 0;
-        set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_STOP);
+        set_motor_speeds(CORNER_OUTER_SPEED, PIVOT_INNER_STOP);
         return;
     }
 
@@ -172,19 +189,18 @@ static void follow_line(unsigned char left_black,
     if (!left_black && !center_black && !right_black) {
         ++line_lost_count;
 
-        if (last_turn_direction < 0) {
-            set_motor_speeds(PIVOT_INNER_STOP, PIVOT_OUTER_SPEED);
-        } else if (last_turn_direction > 0) {
-            set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_STOP);
-        } else {
-            motors_stop();
-        }
-
-        if (line_lost_count > CROSSING_CLEAR_GUARD) {
+        if (line_lost_count > LINE_SEARCH_LIMIT) {
             motors_stop();
             last_turn_direction = 0;
             corner_turn_direction = 0;
+            corner_turn_count = 0;
             line_lost_count = 0;
+        } else if (last_turn_direction < 0) {
+            set_motor_speeds(PIVOT_INNER_STOP, CORNER_OUTER_SPEED);
+        } else if (last_turn_direction > 0) {
+            set_motor_speeds(CORNER_OUTER_SPEED, PIVOT_INNER_STOP);
+        } else {
+            motors_stop();
         }
         return;
     }
