@@ -38,6 +38,8 @@
 
 /* -1 = last detected line was left, +1 = right, 0 = not yet known. */
 static int last_turn_direction = 0;
+/* 0 = normal tracking, -1 = committed left 90-degree turn, +1 = right. */
+static int corner_turn_direction = 0;
 static unsigned long line_lost_count = 0;
 
 static int clamp_motor_speed(int speed)
@@ -93,17 +95,48 @@ static void follow_line(unsigned char left_black,
                         unsigned char center_black,
                         unsigned char right_black)
 {
+    /*
+     * Once an outer-only sensor detects a sharp corner, commit to that
+     * direction. Do not alternate between pivot and curve corrections while
+     * the sensor pattern changes during the turn. Release the turn only when
+     * the center sensor reacquires the black line.
+     */
+    if (corner_turn_direction < 0) {
+        if (center_black) {
+            corner_turn_direction = 0;
+            line_lost_count = 0;
+            set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
+        } else {
+            set_motor_speeds(PIVOT_INNER_REVERSE, PIVOT_OUTER_SPEED);
+        }
+        return;
+    }
+
+    if (corner_turn_direction > 0) {
+        if (center_black) {
+            corner_turn_direction = 0;
+            line_lost_count = 0;
+            set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
+        } else {
+            set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_REVERSE);
+        }
+        return;
+    }
+
+    /* An all-black patch is handled by the course-stage logic in main(). */
     if (left_black && center_black && right_black) {
         motors_stop();
         return;
     }
 
+    /* Centered line. */
     if (!left_black && center_black && !right_black) {
         line_lost_count = 0;
         set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
         return;
     }
 
+    /* Gradual left/right curves: preserve forward motion on both wheels. */
     if (left_black && center_black && !right_black) {
         last_turn_direction = -1;
         line_lost_count = 0;
@@ -118,8 +151,10 @@ static void follow_line(unsigned char left_black,
         return;
     }
 
+    /* Sharp left/right corner: latch the turn until center sees the line. */
     if (left_black && !center_black && !right_black) {
         last_turn_direction = -1;
+        corner_turn_direction = -1;
         line_lost_count = 0;
         set_motor_speeds(PIVOT_INNER_REVERSE, PIVOT_OUTER_SPEED);
         return;
@@ -127,15 +162,16 @@ static void follow_line(unsigned char left_black,
 
     if (!left_black && !center_black && right_black) {
         last_turn_direction = 1;
+        corner_turn_direction = 1;
         line_lost_count = 0;
         set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_REVERSE);
         return;
     }
 
+    /* No sensor sees the line: search in the last known direction. */
     if (!left_black && !center_black && !right_black) {
         ++line_lost_count;
 
-        /* Search toward the side where the line was last seen. */
         if (last_turn_direction < 0) {
             set_motor_speeds(PIVOT_INNER_REVERSE, PIVOT_OUTER_SPEED);
         } else if (last_turn_direction > 0) {
@@ -144,26 +180,22 @@ static void follow_line(unsigned char left_black,
             motors_stop();
         }
 
-        /*
-         * A very long sensor-loss sequence is treated as unrecoverable.
-         * The count is loop iterations, not milliseconds.
-         */
         if (line_lost_count > CROSSING_CLEAR_GUARD) {
             motors_stop();
             last_turn_direction = 0;
+            corner_turn_direction = 0;
             line_lost_count = 0;
         }
         return;
     }
 
+    /* Outer sensors only: ambiguous wide marking; move forward slowly. */
     if (left_black && !center_black && right_black) {
-        /* Wide/split black patch: creep forward instead of steering blindly. */
         line_lost_count = 0;
         set_motor_speeds(2, 2);
         return;
     }
 
-    /* Defensive fallback for any unclassified sensor combination. */
     motors_stop();
 }
 
