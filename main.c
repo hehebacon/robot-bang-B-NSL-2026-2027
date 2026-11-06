@@ -126,6 +126,7 @@ static void follow_line(unsigned char left_black,
         if (center_black) {
             corner_turn_direction = 0;
             line_lost_count = 0;
+            corner_turn_count = 0;
             set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
         } else if (++corner_turn_count >= CORNER_TURN_LIMIT) {
             motors_stop();
