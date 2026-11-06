@@ -129,12 +129,12 @@ static void follow_line(unsigned char left_black,
         error = -1;
     } else if (left_black) {
         error = -2;
-    } else if (center_black) {
-        error = 0;
     } else if (center_black && right_black) {
         error = 1;
     } else if (right_black) {
         error = 2;
+    } else if (center_black) {
+        error = 0;
     }
 
     left_command = LINE_BASE_SPEED + error * LINE_CORRECTION_STEP;
