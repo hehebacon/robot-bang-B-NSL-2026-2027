@@ -112,3 +112,25 @@ claimed as fixed.
 E-Robot compile, DOWNLOAD, or physical boot was possible from this repository
 connection. The portable C++ host tests do not compile or validate this
 Huna-specific `main.c`.
+
+
+## Adaptive controller update (2026-11-06)
+
+The repository-root `main.c` now uses an integer PD-style line controller:
+- sensor patterns are mapped to line-position error values from -2 to +2;
+- the change from the previous valid sample contributes derivative damping;
+- commanded forward speed is reduced as the detected line moves farther from the center sensor;
+- left and right motor commands are calculated independently and clamped to the configured range;
+- the controller resets its previous-error history when the line is lost or an ambiguous split pattern is detected, and stops instead of continuing blindly.
+
+This is adaptive steering from the three binary IR sensors. It is **not** automatic RPM balancing: no wheel encoders or measured motor-speed feedback are confirmed. Fixed motor trims remain at 100%.
+
+Manual RC behavior in the root `main.c`:
+- `OFF_KEY` explicitly stops;
+- `DOWN_KEY` has priority and commands straight reverse;
+- `UP_KEY` commands forward and may combine with LEFT/RIGHT for a differential-drive arc;
+- LEFT or RIGHT alone uses the supplied one-wheel-forward mapping;
+- no recognized key stops the motors;
+- manual mode remains latched and motor targets are ramped by one speed step per 30 ms.
+
+The controller gains and speed values are uncalibrated starting values. Sensor polarity, left/center/right channel mapping, motor direction, combined-key reporting, and the response of the real chassis remain unverified. This source change has not been compiled with the proprietary Huna toolchain or tested on the robot.
