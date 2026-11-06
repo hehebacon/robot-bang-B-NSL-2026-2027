@@ -65,53 +65,27 @@ safe test track. The all-sensors-black pattern is used by the supplied guide as
 the crossing condition; verify the actual sensor placement and polarity first.
 
 
-## Current Huna two-sensor entry point (2026-11-05)
+## Current Huna three-sensor entry point (2026-11-06)
 
-The repository-root `main.c` now models the user's clarified chassis:
-- two rear driven wheels controlled independently by `LMotor_1` and
-  `RMotor_1`;
-- two passive front wheels;
-- two ground-facing IR sensors, read as IR1 and IR3 based on the user's
-  earlier sample; IR2 is not read.
+The repository-root `main.c` now follows the user's confirmed physical layout:
+- IR1, IR2, and IR3 are arranged left / center / right in one horizontal row at the front;
+- two rear wheels are driven independently; the two front wheels are passive;
+- `ir(channel, 950, SENSE)` is assumed to return TRUE on black.
 
-The Huna entry point calls `ir(1, 950, SENSE)` and
-`ir(3, 950, SENSE)`. It assumes TRUE means black and assumes the sensors
-straddle the normal track line: neither sees black when centered, one sees
-black during a side deviation, and both see black at a wide crossing. If the
-actual sensor placement/polarity differs, the truth table must be adjusted
-before the robot is run.
+The line controller uses integer-only proportional correction:
+- IR1+IR2: gentle left correction;
+- IR1 only: stronger left correction;
+- IR2 only: straight;
+- IR2+IR3: gentle right correction;
+- IR3 only: stronger right correction;
+- no sensor sees black, or the split IR1+IR3 pattern appears: stop rather than continue with a stale motor command;
+- all three sensors see black for four consecutive samples: crossing candidate.
 
-Adaptive behavior in the source:
-- centered: straight speed ramps from 3 to 7, one speed step every 50 ms;
-- left/right deviation: the inner rear wheel runs at 1 and the outer at 4;
-- after a deviation clears: straight motion remains at low speed for 200 ms
-  before ramping up;
-- both sensors active for three consecutive samples: treated as a crossing;
-  first crossing is passed, second crossing stops and enters remote control;
-- remote neutral/no key stops both motors;
-- remote input now mixes direction and steering: UP+LEFT/RIGHT drives a
-  forward arc, DOWN+LEFT/RIGHT drives a reverse arc, LEFT/RIGHT alone pivots
-  in place, and UP/DOWN alone drives straight. Conflicting keys cancel the
-  corresponding direction/steering axis.
+The first confirmed all-three-black marker is crossed at low speed and must clear within a bounded wait; otherwise the firmware remains stopped. The second marker enters the existing latched manual remote loop. The remote loop retains independent rear-motor commands, integer trims, a speed slew limiter, and combined direction/steering targets. Simultaneous key reporting still depends on the Huna `rc()` implementation and is not verified.
 
-The mixed-key behavior assumes the Huna `rc()` API can report multiple
-simultaneously pressed keys. This has not yet been confirmed on the physical
-remote/controller. If `rc()` only reports one key at a time, diagonal/arc
-commands will not work and the input method must be adapted.
+**Obstacle limitation:** no forward-facing range/obstacle sensor is installed, so the firmware cannot identify a physical obstacle or perform sensor-based avoidance. The three IR sensors are ground-facing line sensors only. Obstacle/rescue mission actions must remain disabled until a permitted, already-installed detection interface is confirmed; do not infer obstacle presence from line-sensor states.
 
-Two binary sensors do not measure an exact curve angle; the code uses a
-conservative left/right deviation classification. The speed constants are
-starting values and need physical tuning.
-
-**Boot/build status:** the MCU initialization call and Huna API function names
-remain from the existing entry point, but this file has NOT been compiled with
-the proprietary E-Robot V1.4 toolchain, downloaded to the actual controller,
-or boot-tested. A GitHub commit is not proof of successful compilation or boot.
-Do not put this version into a live run until it builds in the correct Huna
-environment and the sensor truth table and motor directions are checked with
-the drive wheels safely lifted. The previous three-sensor PID description is
-superseded for the root `main.c`; the portable C++ three-input reference model
-and its host tests are unchanged and are not a validation of this Huna file.
+**Verification boundary:** source-level GitHub changes only. The proprietary Huna E-Robot toolchain/header is not available here, so this version has NOT been compiled with that toolchain, downloaded to the controller, or boot-tested. Confirm sensor order, polarity, threshold, motor direction, and remote-key behavior on a safely secured robot before a track run.
 
 ## Manual-mode stability update (2026-11-05)
 
