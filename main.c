@@ -1,70 +1,72 @@
 /*
  * BANG B - HUNA E-ROBOT V1.4
- * Two-IR differential-drive line follower with gradual speed control.
+ * Three-IR differential-drive line follower with integer steering correction.
  *
- * Hardware model supplied by the user:
- * - rear left/right wheels are driven by LMotor_1 / RMotor_1;
- * - front wheels are passive;
- * - two ground-facing IR sensors are used.
+ * Confirmed current chassis layout from the user:
+ * - IR1 / IR2 / IR3 are arranged left / center / right in one horizontal row
+ *   at the front of the robot;
+ * - rear left/right wheels are driven independently;
+ * - front wheels are passive.
  *
- * Sensor channels follow the user's earlier sample:
- *   IR1 = left, IR3 = right; IR2 is not read.
- *   ir(channel, 950, SENSE) == TRUE is assumed to mean black line.
+ * Sensor/API assumptions retained from the existing Huna entry point:
+ *   ir(channel, 950, SENSE) == TRUE means black line.
+ *   Positive motor speed means forward; zero means stop.
+ * Verify these conventions on the real board before a track run.
  *
- * IMPORTANT SENSOR-GEOMETRY ASSUMPTION:
- * The two sensors must straddle the normal line: neither sees black when
- * centered, one sees black when the robot drifts, and both see black at a
- * wide crossing. Confirm this on the actual chassis before track use.
+ * No forward obstacle/range sensor is installed. This firmware therefore
+ * does NOT claim to detect or avoid physical obstacles. It only follows the
+ * line, handles the configured all-three-black crossing pattern, and offers
+ * the existing latched manual remote mode.
  *
- * This file uses only the Huna API names already shown in the user's sample.
- * It does not prove compatibility with the proprietary E-Robot compiler,
- * successful DOWNLOAD, or successful boot on the physical board.
+ * Source-level update only: proprietary Huna compile, DOWNLOAD, and physical
+ * boot have not been performed or verified.
  */
 #include "functions_codes.h"
 
-#define LOOP_DELAY_MS       10
-#define CROSSING_DRIVE_MS  180
-#define CROSSING_CLEAR_TIMEOUT_MS 1500
-#define CROSSING_CONFIRM_COUNT 4
+#define LOOP_DELAY_MS                 10
+#define CROSSING_DRIVE_MS            180
+#define CROSSING_CLEAR_TIMEOUT_MS   1500
+#define CROSSING_CONFIRM_COUNT         4
 
-/* Conservative common profile to reduce abrupt acceleration. */
-#define STRAIGHT_MIN_SPEED  2
-#define STRAIGHT_MAX_SPEED  5
-#define CURVE_INNER_SPEED   1
-#define CURVE_OUTER_SPEED   3
-#define SPEED_RAMP_INTERVAL_MS 100
-#define CURVE_RECOVERY_MS  200
-#define CURVE_RECOVERY_TICKS (CURVE_RECOVERY_MS / LOOP_DELAY_MS)
+#define LINE_BASE_SPEED                3
+#define LINE_MAX_SPEED                 5
+#define LINE_CORRECTION_STEP           1
+#define MOTOR_OUTPUT_LIMIT             5
 
-#define STAGE_FIRST  0
-#define STAGE_SECOND 1
+#define STAGE_FIRST                    0
+#define STAGE_SECOND                   1
 
-static int straight_speed = STRAIGHT_MIN_SPEED;
-static int ramp_elapsed_ms = 0;
-static int curve_recovery_ticks = 0;
+#define REMOTE_TURN_DELTA              2
+#define REMOTE_MAX_SPEED               5
+#define REMOTE_RAMP_INTERVAL_MS       30
+
 static int remote_left_current = 0;
 static int remote_right_current = 0;
 static int remote_ramp_elapsed_ms = 0;
 
 /*
- * Independent integer trims for the two rear motors.
- * 100 means unchanged. Adjust LEFT and RIGHT separately after a safe,
- * repeatable straight-line test. This compensates stable mismatch only;
- * without wheel encoders it is not live RPM feedback.
+ * Independent fixed trims compensate a stable left/right motor mismatch.
+ * 100 means unchanged. These are NOT live speed feedback: no wheel encoders
+ * are confirmed on this robot. Tune only after controlled, safe testing.
  */
-#define LEFT_MOTOR_TRIM_PERCENT   100
-#define RIGHT_MOTOR_TRIM_PERCENT  100
-#define MOTOR_OUTPUT_LIMIT        5
+#define LEFT_MOTOR_TRIM_PERCENT       100
+#define RIGHT_MOTOR_TRIM_PERCENT      100
+
+static int clamp_motor_speed(int speed)
+{
+    if (speed > MOTOR_OUTPUT_LIMIT) return MOTOR_OUTPUT_LIMIT;
+    if (speed < -MOTOR_OUTPUT_LIMIT) return -MOTOR_OUTPUT_LIMIT;
+    return speed;
+}
 
 static int apply_motor_trim(int command, int trim_percent)
 {
     int scaled = command * trim_percent;
+
     if (scaled >= 0) scaled = (scaled + 50) / 100;
     else scaled = (scaled - 50) / 100;
 
-    if (scaled > MOTOR_OUTPUT_LIMIT) scaled = MOTOR_OUTPUT_LIMIT;
-    if (scaled < -MOTOR_OUTPUT_LIMIT) scaled = -MOTOR_OUTPUT_LIMIT;
-    return scaled;
+    return clamp_motor_speed(scaled);
 }
 
 static void set_motor_speeds(int left_command, int right_command)
@@ -78,75 +80,73 @@ static void motors_stop(void)
     set_motor_speeds(0, 0);
 }
 
-static unsigned char left_on_black(void)
+static unsigned char ir_black(unsigned char channel)
 {
-    return (ir(1, 950, SENSE) == TRUE);
+    return (ir(channel, 950, SENSE) == TRUE);
 }
 
-static unsigned char right_on_black(void)
+static unsigned char all_three_black(void)
 {
-    return (ir(3, 950, SENSE) == TRUE);
-}
-
-static void reset_speed_state(void)
-{
-    straight_speed = STRAIGHT_MIN_SPEED;
-    ramp_elapsed_ms = 0;
-    curve_recovery_ticks = 0;
-}
-
-static void drive_straight_gradually(void)
-{
-    if (curve_recovery_ticks > 0) {
-        --curve_recovery_ticks;
-        set_motor_speeds(STRAIGHT_MIN_SPEED, STRAIGHT_MIN_SPEED);
-        return;
-    }
-
-    ramp_elapsed_ms += LOOP_DELAY_MS;
-    if (ramp_elapsed_ms >= SPEED_RAMP_INTERVAL_MS) {
-        ramp_elapsed_ms = 0;
-        if (straight_speed < STRAIGHT_MAX_SPEED) {
-            ++straight_speed;
-        }
-    }
-
-    set_motor_speeds(straight_speed, straight_speed);
+    return (ir_black(1) && ir_black(2) && ir_black(3));
 }
 
 /*
- * With sensors straddling the line:
- * - neither sees black: centered, accelerate gradually;
- * - left sees black: line is under left sensor, steer left;
- * - right sees black: line is under right sensor, steer right;
- * - both see black: handled by crossing state machine.
+ * Integer proportional steering from the three horizontal sensors.
+ * Assumed polarity: TRUE = black.
  *
- * Binary sensors cannot measure an exact corner angle. A detected side
- * deviation is treated conservatively as a corner and both wheels slow down.
+ * 100 -> strong left correction; 110 -> gentle left correction
+ * 010 -> straight; 011 -> gentle right correction; 001 -> strong right
+ * 000 -> line lost: stop; 101 -> ambiguous split pattern: stop
+ * 111 -> crossing: handled by the crossing state machine.
+ *
+ * Negative error means the line is to the robot's left. The left motor is
+ * slowed and the right motor sped up; the reverse applies to right correction.
  */
 static void follow_line(unsigned char left_black,
+                        unsigned char center_black,
                         unsigned char right_black)
 {
-    if (!left_black && !right_black) {
-        drive_straight_gradually();
-    } else if (left_black && !right_black) {
-        straight_speed = STRAIGHT_MIN_SPEED;
-        ramp_elapsed_ms = 0;
-        curve_recovery_ticks = CURVE_RECOVERY_TICKS;
-        set_motor_speeds(CURVE_INNER_SPEED, CURVE_OUTER_SPEED);
-    } else if (!left_black && right_black) {
-        straight_speed = STRAIGHT_MIN_SPEED;
-        ramp_elapsed_ms = 0;
-        curve_recovery_ticks = CURVE_RECOVERY_TICKS;
-        set_motor_speeds(CURVE_OUTER_SPEED, CURVE_INNER_SPEED);
-    } else {
-        motors_stop();
-    }
-}
+    int error = 0;
+    int left_command;
+    int right_command;
 
-#define REMOTE_TURN_DELTA 2
-#define REMOTE_MAX_SPEED 5
-#define REMOTE_RAMP_INTERVAL_MS 30
+    if (left_black && center_black && right_black) {
+        motors_stop();
+        return;
+    }
+
+    if (!left_black && !center_black && !right_black) {
+        motors_stop();
+        return;
+    }
+
+    if (left_black && !center_black && right_black) {
+        motors_stop();
+        return;
+    }
+
+    if (left_black && center_black) {
+        error = -1;
+    } else if (left_black) {
+        error = -2;
+    } else if (center_black) {
+        error = 0;
+    } else if (center_black && right_black) {
+        error = 1;
+    } else if (right_black) {
+        error = 2;
+    }
+
+    left_command = LINE_BASE_SPEED + error * LINE_CORRECTION_STEP;
+    right_command = LINE_BASE_SPEED - error * LINE_CORRECTION_STEP;
+
+    if (left_command < 1) left_command = 1;
+    if (right_command < 1) right_command = 1;
+    if (left_command > LINE_MAX_SPEED) left_command = LINE_MAX_SPEED;
+    if (right_command > LINE_MAX_SPEED) right_command = LINE_MAX_SPEED;
+
+    set_motor_speeds(left_command, right_command);
+}
 
 static int clamp_remote_speed(int speed)
 {
@@ -155,7 +155,6 @@ static int clamp_remote_speed(int speed)
     return speed;
 }
 
-/* Limit the rate of change to soften motor start/stop and direction changes. */
 static int approach_remote_target(int current, int target)
 {
     if (current < target) return current + 1;
@@ -164,18 +163,14 @@ static int approach_remote_target(int current, int target)
 }
 
 /*
- * Remote control supports combined direction + steering:
- * UP + LEFT/RIGHT = forward arc; DOWN + LEFT/RIGHT = reverse arc.
- * LEFT/RIGHT alone pivots in place; UP/DOWN alone drives straight.
- * This reads each key independently, so simultaneous-key reporting by
- * the remote/controller must be supported by the Huna rc() API.
+ * Manual mode is latched, as in the previous version.
+ * UP/DOWN + LEFT/RIGHT make differential-drive arcs.
+ * LEFT/RIGHT alone pivot; UP/DOWN alone drive straight.
+ * Simultaneous key reporting depends on the Huna rc() implementation and
+ * still needs confirmation on the physical controller.
  */
 static void remote_control(void)
 {
-    int target_left = 0;
-    int target_right = 0;
-
-    /* Manual mode is intentionally latched: there is no timeout or Auto exit. */
     remote_left_current = 0;
     remote_right_current = 0;
     remote_ramp_elapsed_ms = 0;
@@ -187,11 +182,13 @@ static void remote_control(void)
         unsigned char right = (rc(RIGHT_KEY) == TRUE);
         int base_speed = 0;
         int turn_delta = 0;
+        int target_left;
+        int target_right;
 
         if (up && !down) {
-            base_speed = STRAIGHT_MAX_SPEED;
+            base_speed = LINE_MAX_SPEED;
         } else if (down && !up) {
-            base_speed = -STRAIGHT_MAX_SPEED;
+            base_speed = -LINE_MAX_SPEED;
         }
 
         if (left && !right) {
@@ -203,7 +200,6 @@ static void remote_control(void)
         target_left = clamp_remote_speed(base_speed - turn_delta);
         target_right = clamp_remote_speed(base_speed + turn_delta);
 
-        /* Change each motor command by at most one speed step per 30 ms. */
         remote_ramp_elapsed_ms += LOOP_DELAY_MS;
         if (remote_ramp_elapsed_ms >= REMOTE_RAMP_INTERVAL_MS) {
             remote_ramp_elapsed_ms = 0;
@@ -225,14 +221,15 @@ int main(void)
 
     mcu_initialization();
     motors_stop();
-    reset_speed_state();
 
     for (;;) {
-        unsigned char left_black = left_on_black();
-        unsigned char right_black = right_on_black();
+        unsigned char left_black = ir_black(1);
+        unsigned char center_black = ir_black(2);
+        unsigned char right_black = ir_black(3);
+        unsigned char crossing =
+            (left_black && center_black && right_black);
 
-        /* Debounce the two-sensor wide-black crossing pattern. */
-        if (left_black && right_black) {
+        if (crossing) {
             if (crossing_count < CROSSING_CONFIRM_COUNT) {
                 ++crossing_count;
             }
@@ -241,27 +238,25 @@ int main(void)
         }
 
         if (crossing_count >= CROSSING_CONFIRM_COUNT) {
+            unsigned int clear_wait_ms = 0;
+
             motors_stop();
-            reset_speed_state();
 
             if (stage == STAGE_FIRST) {
-                /* Cross briefly, then require the sensors to clear.
-                 * A bounded wait prevents a stuck sensor/wide patch from
-                 * keeping the robot driving forward forever. */
-                unsigned int clear_wait_ms = 0;
-                set_motor_speeds(STRAIGHT_MIN_SPEED, STRAIGHT_MIN_SPEED);
+                /* Pass the first all-three-black marker at low speed. */
+                set_motor_speeds(2, 2);
                 delay(0, 0, 0, CROSSING_DRIVE_MS);
 
-                while (left_on_black() && right_on_black() &&
+                while (all_three_black() &&
                        clear_wait_ms < CROSSING_CLEAR_TIMEOUT_MS) {
-                    set_motor_speeds(STRAIGHT_MIN_SPEED, STRAIGHT_MIN_SPEED);
+                    set_motor_speeds(2, 2);
                     delay(0, 0, 0, LOOP_DELAY_MS);
                     clear_wait_ms += LOOP_DELAY_MS;
                 }
 
                 if (clear_wait_ms >= CROSSING_CLEAR_TIMEOUT_MS &&
-                    left_on_black() && right_on_black()) {
-                    /* Fail stopped instead of driving indefinitely. */
+                    all_three_black()) {
+                    /* Sensor pattern did not clear: fail stopped. */
                     motors_stop();
                     for (;;) {
                         delay(0, 0, 0, 100);
@@ -269,7 +264,6 @@ int main(void)
                 }
 
                 motors_stop();
-                reset_speed_state();
                 crossing_count = 0;
                 stage = STAGE_SECOND;
             } else {
@@ -278,7 +272,7 @@ int main(void)
                 remote_control();
             }
         } else {
-            follow_line(left_black, right_black);
+            follow_line(left_black, center_black, right_black);
             delay(0, 0, 0, LOOP_DELAY_MS);
         }
     }
