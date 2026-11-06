@@ -1,51 +1,49 @@
 /*
  * BANG B - HUNA E-ROBOT
  *
- * Chassis confirmed by user:
- * - IR1 / IR2 / IR3: front ground-facing sensors, left / center / right.
- * - Two independently driven rear DC motors.
- * - Two passive front wheels.
+ * Chassis: 3 front ground IR sensors (left/center/right), two driven rear
+ * wheels, two passive front wheels.
  *
- * Sensor convention follows the comments in the supplied Huna template:
- * ir(channel, 0, NONE) == TRUE is treated as black-line detection.
+ * Black-line convention follows the comments in the supplied Huna template:
+ * ir(channel, 0, NONE) == TRUE.
  *
- * IMPORTANT:
- * - No delay() call is used here because the four delay() arguments in the
- *   supplied template have not been documented well enough to treat the last
- *   argument as milliseconds.
- * - The crossing-clear guard is an iteration bound, NOT a calibrated timer.
- * - No obstacle sensor or wheel encoder is confirmed.
- * - This source has not been compiled with the proprietary Huna toolchain or
- *   tested on the physical robot.
+ * No forward obstacle sensor or wheel encoder is confirmed. This controller
+ * therefore follows the floor line only; it cannot detect obstacles or
+ * measure actual wheel RPM.
+ *
+ * Huna delay() time units have not been verified, so this file does not use
+ * delay(). Corner recovery is stateful and uses sensor feedback, not a
+ * guessed millisecond duration.
  */
 #include "functions_codes.h"
 
-#define LINE_MAX_SPEED             5
-#define LINE_MIN_SPEED             1
-#define LINE_KP                    1
-#define LINE_KD                    1
-#define MOTOR_OUTPUT_LIMIT         5
+#define MOTOR_LIMIT                 5
+#define STRAIGHT_SPEED              3
+#define SOFT_TURN_OUTER_SPEED       4
+#define SOFT_TURN_INNER_SPEED       1
+#define PIVOT_OUTER_SPEED           3
+#define PIVOT_INNER_REVERSE        -2
+#define CROSSING_CONFIRM_COUNT      4
+#define CROSSING_CLEAR_GUARD        100000UL
+#define CROSSING_PASS_SPEED         2
 
-#define CROSSING_CONFIRM_COUNT     4
-#define CROSSING_CLEAR_GUARD       100000UL
-#define CROSSING_PASS_SPEED        2
+#define REMOTE_MAX_SPEED            5
+#define REMOTE_TURN_DELTA           2
 
-#define REMOTE_MAX_SPEED           5
-#define REMOTE_TURN_DELTA          2
+#define LEFT_MOTOR_TRIM_PERCENT   100
+#define RIGHT_MOTOR_TRIM_PERCENT  100
 
-#define LEFT_MOTOR_TRIM_PERCENT    100
-#define RIGHT_MOTOR_TRIM_PERCENT   100
+#define STAGE_FIRST                 0
+#define STAGE_SECOND                1
 
-#define STAGE_FIRST                0
-#define STAGE_SECOND               1
-
-static int previous_line_error = 0;
-static unsigned char has_previous_line_error = 0;
+/* -1 = last detected line was left, +1 = right, 0 = not yet known. */
+static int last_turn_direction = 0;
+static unsigned long line_lost_count = 0;
 
 static int clamp_motor_speed(int speed)
 {
-    if (speed > MOTOR_OUTPUT_LIMIT) return MOTOR_OUTPUT_LIMIT;
-    if (speed < -MOTOR_OUTPUT_LIMIT) return -MOTOR_OUTPUT_LIMIT;
+    if (speed > MOTOR_LIMIT) return MOTOR_LIMIT;
+    if (speed < -MOTOR_LIMIT) return -MOTOR_LIMIT;
     return speed;
 }
 
@@ -79,63 +77,100 @@ static unsigned char all_three_black(void)
 }
 
 /*
- * Three-sensor integer PD-style steering.
- * This estimates line position from binary sensor states. It does NOT measure
- * or automatically balance actual wheel RPM; no encoders are confirmed.
+ * Sensor table:
+ * 010: centered line -> straight, deliberately moderate speed.
+ * 110 / 011: curve -> slow inner wheel, keep outer wheel moving.
+ * 100 / 001: sharp corner -> pivot toward the detected line until center
+ *            sensor reacquires it.
+ * 000: line temporarily lost -> search in the last known turn direction.
+ * 101: both outer sensors active -> treat as a broad/ambiguous patch and
+ *      creep straight; do not make an arbitrary turn.
+ *
+ * This avoids the old behavior of stopping immediately on 000 and losing
+ * all information about which way the robot should search.
  */
 static void follow_line(unsigned char left_black,
                         unsigned char center_black,
                         unsigned char right_black)
 {
-    int error = 0;
-    int derivative = 0;
-    int correction;
-    int base_speed;
-    int left_command;
-    int right_command;
-    int abs_error;
-
-    if ((left_black && center_black && right_black) ||
-        (!left_black && !center_black && !right_black) ||
-        (left_black && !center_black && right_black)) {
-        has_previous_line_error = 0;
+    if (left_black && center_black && right_black) {
         motors_stop();
         return;
     }
 
-    if (left_black && center_black) error = -1;
-    else if (left_black) error = -2;
-    else if (center_black && right_black) error = 1;
-    else if (right_black) error = 2;
-    else error = 0;
-
-    if (has_previous_line_error) {
-        derivative = error - previous_line_error;
+    if (!left_black && center_black && !right_black) {
+        line_lost_count = 0;
+        set_motor_speeds(STRAIGHT_SPEED, STRAIGHT_SPEED);
+        return;
     }
 
-    previous_line_error = error;
-    has_previous_line_error = 1;
+    if (left_black && center_black && !right_black) {
+        last_turn_direction = -1;
+        line_lost_count = 0;
+        set_motor_speeds(SOFT_TURN_INNER_SPEED, SOFT_TURN_OUTER_SPEED);
+        return;
+    }
 
-    abs_error = (error < 0) ? -error : error;
-    base_speed = LINE_MAX_SPEED - abs_error;
-    if (base_speed < 2) base_speed = 2;
+    if (!left_black && center_black && right_black) {
+        last_turn_direction = 1;
+        line_lost_count = 0;
+        set_motor_speeds(SOFT_TURN_OUTER_SPEED, SOFT_TURN_INNER_SPEED);
+        return;
+    }
 
-    correction = (LINE_KP * error) + (LINE_KD * derivative);
-    left_command = base_speed + correction;
-    right_command = base_speed - correction;
+    if (left_black && !center_black && !right_black) {
+        last_turn_direction = -1;
+        line_lost_count = 0;
+        set_motor_speeds(PIVOT_INNER_REVERSE, PIVOT_OUTER_SPEED);
+        return;
+    }
 
-    if (left_command < LINE_MIN_SPEED) left_command = LINE_MIN_SPEED;
-    if (right_command < LINE_MIN_SPEED) right_command = LINE_MIN_SPEED;
-    if (left_command > LINE_MAX_SPEED) left_command = LINE_MAX_SPEED;
-    if (right_command > LINE_MAX_SPEED) right_command = LINE_MAX_SPEED;
+    if (!left_black && !center_black && right_black) {
+        last_turn_direction = 1;
+        line_lost_count = 0;
+        set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_REVERSE);
+        return;
+    }
 
-    set_motor_speeds(left_command, right_command);
+    if (!left_black && !center_black && !right_black) {
+        ++line_lost_count;
+
+        /* Search toward the side where the line was last seen. */
+        if (last_turn_direction < 0) {
+            set_motor_speeds(PIVOT_INNER_REVERSE, PIVOT_OUTER_SPEED);
+        } else if (last_turn_direction > 0) {
+            set_motor_speeds(PIVOT_OUTER_SPEED, PIVOT_INNER_REVERSE);
+        } else {
+            motors_stop();
+        }
+
+        /*
+         * A very long sensor-loss sequence is treated as unrecoverable.
+         * The count is loop iterations, not milliseconds.
+         */
+        if (line_lost_count > CROSSING_CLEAR_GUARD) {
+            motors_stop();
+            last_turn_direction = 0;
+            line_lost_count = 0;
+        }
+        return;
+    }
+
+    if (left_black && !center_black && right_black) {
+        /* Wide/split black patch: creep forward instead of steering blindly. */
+        line_lost_count = 0;
+        set_motor_speeds(2, 2);
+        return;
+    }
+
+    /* Defensive fallback for any unclassified sensor combination. */
+    motors_stop();
 }
 
 /*
- * Manual mode remains latched.
- * DOWN takes priority. UP+LEFT/RIGHT makes a forward arc.
- * LEFT alone = (0, 5); RIGHT alone = (5, 0), matching the user's mapping.
+ * Latched manual control:
+ * DOWN priority; UP+LEFT/RIGHT makes a forward arc.
+ * LEFT alone = (0, 5), RIGHT alone = (5, 0), as previously specified.
  * OFF_KEY and no key both stop immediately.
  */
 static void remote_control(void)
@@ -152,9 +187,7 @@ static void remote_control(void)
         if (off) {
             motors_stop();
         } else if (down) {
-            target_left = -REMOTE_MAX_SPEED;
-            target_right = -REMOTE_MAX_SPEED;
-            set_motor_speeds(target_left, target_right);
+            set_motor_speeds(-REMOTE_MAX_SPEED, -REMOTE_MAX_SPEED);
         } else if (up) {
             target_left = REMOTE_MAX_SPEED;
             target_right = REMOTE_MAX_SPEED;
@@ -164,7 +197,6 @@ static void remote_control(void)
             } else if (right && !left) {
                 target_right -= REMOTE_TURN_DELTA;
             }
-
             set_motor_speeds(target_left, target_right);
         } else if (left && !right) {
             set_motor_speeds(0, REMOTE_MAX_SPEED);
@@ -203,11 +235,7 @@ int main(void)
             if (stage == STAGE_FIRST) {
                 unsigned long guard = 0;
 
-                /*
-                 * Pass the first marker slowly until the sensors no longer
-                 * see all-black. The guard prevents an endless drive if the
-                 * sensor pattern never clears; it is not a time measurement.
-                 */
+                /* Pass the first all-black marker at low speed. */
                 while (all_three_black() &&
                        guard < CROSSING_CLEAR_GUARD) {
                     set_motor_speeds(CROSSING_PASS_SPEED,
@@ -218,7 +246,7 @@ int main(void)
                 motors_stop();
 
                 if (all_three_black()) {
-                    /* Pattern did not clear: remain stopped. */
+                    /* Sensor pattern did not clear: fail stopped. */
                     for (;;) {
                         motors_stop();
                     }
@@ -226,7 +254,8 @@ int main(void)
 
                 stage = STAGE_SECOND;
                 crossing_count = 0;
-                has_previous_line_error = 0;
+                last_turn_direction = 0;
+                line_lost_count = 0;
             } else {
                 motors_stop();
                 remote_control();
