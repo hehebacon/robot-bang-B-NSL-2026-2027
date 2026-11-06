@@ -46,10 +46,36 @@ static int remote_left_current = 0;
 static int remote_right_current = 0;
 static int remote_ramp_elapsed_ms = 0;
 
+/*
+ * Independent integer trims for the two rear motors.
+ * 100 means unchanged. Adjust LEFT and RIGHT separately after a safe,
+ * repeatable straight-line test. This compensates stable mismatch only;
+ * without wheel encoders it is not live RPM feedback.
+ */
+#define LEFT_MOTOR_TRIM_PERCENT   100
+#define RIGHT_MOTOR_TRIM_PERCENT  100
+#define MOTOR_OUTPUT_LIMIT        5
+
+static int apply_motor_trim(int command, int trim_percent)
+{
+    int scaled = command * trim_percent;
+    if (scaled >= 0) scaled = (scaled + 50) / 100;
+    else scaled = (scaled - 50) / 100;
+
+    if (scaled > MOTOR_OUTPUT_LIMIT) scaled = MOTOR_OUTPUT_LIMIT;
+    if (scaled < -MOTOR_OUTPUT_LIMIT) scaled = -MOTOR_OUTPUT_LIMIT;
+    return scaled;
+}
+
+static void set_motor_speeds(int left_command, int right_command)
+{
+    LMotor_1(apply_motor_trim(left_command, LEFT_MOTOR_TRIM_PERCENT));
+    RMotor_1(apply_motor_trim(right_command, RIGHT_MOTOR_TRIM_PERCENT));
+}
+
 static void motors_stop(void)
 {
-    LMotor_1(0);
-    RMotor_1(0);
+    set_motor_speeds(0, 0);
 }
 
 static unsigned char left_on_black(void)
@@ -73,8 +99,7 @@ static void drive_straight_gradually(void)
 {
     if (curve_recovery_ticks > 0) {
         --curve_recovery_ticks;
-        LMotor_1(STRAIGHT_MIN_SPEED);
-        RMotor_1(STRAIGHT_MIN_SPEED);
+        set_motor_speeds(STRAIGHT_MIN_SPEED, STRAIGHT_MIN_SPEED);
         return;
     }
 
@@ -86,8 +111,7 @@ static void drive_straight_gradually(void)
         }
     }
 
-    LMotor_1(straight_speed);
-    RMotor_1(straight_speed);
+    set_motor_speeds(straight_speed, straight_speed);
 }
 
 /*
@@ -109,14 +133,12 @@ static void follow_line(unsigned char left_black,
         straight_speed = STRAIGHT_MIN_SPEED;
         ramp_elapsed_ms = 0;
         curve_recovery_ticks = CURVE_RECOVERY_TICKS;
-        LMotor_1(CURVE_INNER_SPEED);
-        RMotor_1(CURVE_OUTER_SPEED);
+        set_motor_speeds(CURVE_INNER_SPEED, CURVE_OUTER_SPEED);
     } else if (!left_black && right_black) {
         straight_speed = STRAIGHT_MIN_SPEED;
         ramp_elapsed_ms = 0;
         curve_recovery_ticks = CURVE_RECOVERY_TICKS;
-        LMotor_1(CURVE_OUTER_SPEED);
-        RMotor_1(CURVE_INNER_SPEED);
+        set_motor_speeds(CURVE_OUTER_SPEED, CURVE_INNER_SPEED);
     } else {
         motors_stop();
     }
@@ -191,8 +213,7 @@ static void remote_control(void)
                 approach_remote_target(remote_right_current, target_right);
         }
 
-        LMotor_1(remote_left_current);
-        RMotor_1(remote_right_current);
+        set_motor_speeds(remote_left_current, remote_right_current);
         delay(0, 0, 0, LOOP_DELAY_MS);
     }
 }
@@ -228,14 +249,12 @@ int main(void)
                  * A bounded wait prevents a stuck sensor/wide patch from
                  * keeping the robot driving forward forever. */
                 unsigned int clear_wait_ms = 0;
-                LMotor_1(STRAIGHT_MIN_SPEED);
-                RMotor_1(STRAIGHT_MIN_SPEED);
+                set_motor_speeds(STRAIGHT_MIN_SPEED, STRAIGHT_MIN_SPEED);
                 delay(0, 0, 0, CROSSING_DRIVE_MS);
 
                 while (left_on_black() && right_on_black() &&
                        clear_wait_ms < CROSSING_CLEAR_TIMEOUT_MS) {
-                    LMotor_1(STRAIGHT_MIN_SPEED);
-                    RMotor_1(STRAIGHT_MIN_SPEED);
+                    set_motor_speeds(STRAIGHT_MIN_SPEED, STRAIGHT_MIN_SPEED);
                     delay(0, 0, 0, LOOP_DELAY_MS);
                     clear_wait_ms += LOOP_DELAY_MS;
                 }
