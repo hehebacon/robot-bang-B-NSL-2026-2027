@@ -2,15 +2,16 @@
 
 /*
  * Automatic line follower:
- * - Accelerates gradually on a centered straight section.
- * - Slows down for curves.
- * - Uses a stronger steering command for outer-sensor-only sharp turns.
- * Sensor polarity and steering directions follow the user's known-working code.
+ * - Starts at speed 0 and ramps up gradually on a centered straight section.
+ * - Holds the target speed once reached.
+ * - Slows for curves, then ramps up again on the next straight.
+ * - Uses the sensor polarity and steering directions from the user's
+ *   known-working code.
  *
  * Acceleration is based on loop counts, not calibrated seconds. Tune only
  * after testing on the actual track.
  */
-#define AUTO_START_SPEED       3
+#define AUTO_START_SPEED       0
 #define AUTO_MAX_SPEED         5
 #define AUTO_ACCEL_TICKS       300
 #define CURVE_TURN_SPEED       4
@@ -37,14 +38,15 @@ static int auto_line_step(int stop_at_marker)
         }
         else
         {
-            LMotor_1(auto_speed);
-            RMotor_1(auto_speed);
+            /* Keep the marker-crossing movement from starting at zero. */
+            LMotor_1(1);
+            RMotor_1(1);
             delay(0,0,0,250);
         }
         return 1;
     }
 
-    /* Center sensor sees the line: accelerate progressively on straight. */
+    /* Center sensor sees the line: ramp up progressively on straight. */
     if(!l_black && c_black && !r_black)
     {
         straight_ticks++;
