@@ -32,6 +32,7 @@ int main()
     int key_right;
     int key_off;
     int manual_active;
+    int manual_mode_requested;
 
     mcu_initialization();
 
@@ -42,6 +43,7 @@ int main()
     ramp_tick = 0;
     last_direction = 0;
     manual_active = 0;
+    manual_mode_requested = 0;
 
     while (1)
     {
@@ -51,6 +53,13 @@ int main()
         /* STAGE 1: autonomous line following. */
         for (;;)
         {
+            /* UP on the RC immediately requests manual mode. */
+            if (rc(UP_KEY) == TRUE)
+            {
+                manual_mode_requested = 1;
+                break;
+            }
+
             left_black = (ir(1, 0, NONE) == TRUE);
             center_black = (ir(2, 0, NONE) == TRUE);
             right_black = (ir(3, 0, NONE) == TRUE);
@@ -77,10 +86,10 @@ int main()
                  * Stop after a bounded search so colored/white floor
                  * cannot trap the robot in an endless reverse loop.
                  */
-                target_left = -2;
-                target_right = -2;
-                current_left = -2;
-                current_right = -2;
+                target_left = -10;
+                target_right = -10;
+                current_left = -10;
+                current_right = -10;
                 recovery_count++;
 
                 if (recovery_count > 10)
@@ -164,7 +173,11 @@ int main()
                 break;
         }
 
-        if (recovery_failed)
+        if (manual_mode_requested)
+        {
+            /* Skip the remaining autonomous stage and enter RC control. */
+        }
+        else if (recovery_failed)
         {
             target_left = 0;
             target_right = 0;
@@ -180,6 +193,13 @@ int main()
 
             for (;;)
             {
+                /* UP on the RC immediately requests manual mode. */
+                if (rc(UP_KEY) == TRUE)
+                {
+                    manual_mode_requested = 1;
+                    break;
+                }
+
                 left_black = (ir(1, 0, NONE) == TRUE);
                 center_black = (ir(2, 0, NONE) == TRUE);
                 right_black = (ir(3, 0, NONE) == TRUE);
@@ -204,10 +224,10 @@ int main()
                 if (!left_black && !center_black && !right_black)
                 {
                     /* Reverse at -2 and keep polling until black is reacquired. */
-                    target_left = -2;
-                    target_right = -2;
-                    current_left = -2;
-                    current_right = -2;
+                    target_left = -10;
+                    target_right = -10;
+                    current_left = -10;
+                    current_right = -10;
                     recovery_count++;
 
                     /* Bounded fallback prevents an endless loop on colored floor. */
@@ -303,6 +323,7 @@ int main()
          * Releasing a moving key gives one short reverse braking pulse,
          * then the motors are stopped and ready for the next command.
          */
+        manual_mode_requested = 0;
         manual_active = 0;
 
         for (;;)
