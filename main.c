@@ -34,6 +34,7 @@ int main()
     int manual_active;
     int manual_mode_requested;
     int auto_speed;
+    int auto_accel_tick;
     int manual_speed;
     int manual_ramp_tick;
 
@@ -48,6 +49,7 @@ int main()
     manual_active = 0;
     manual_mode_requested = 0;
     auto_speed = 3;
+    auto_accel_tick = 0;
     manual_speed = 5;
     manual_ramp_tick = 0;
 
@@ -56,6 +58,7 @@ int main()
         recovery_count = 0;
         recovery_failed = 0;
         auto_speed = 3;
+        auto_accel_tick = 0;
 
         /* STAGE 1: autonomous line following. */
         for (;;)
@@ -114,39 +117,53 @@ int main()
 
                 if (center_black && !left_black && !right_black)
                 {
-                    if (auto_speed < 6 && ramp_tick >= 2)
+                    auto_accel_tick++;
+                    if (auto_accel_tick >= 2)
+                    {
                         auto_speed++;
+                        auto_accel_tick = 0;
+                    }
                     target_left = auto_speed;
                     target_right = auto_speed;
                     last_direction = 0;
                 }
                 else if (left_black && center_black && !right_black)
                 {
-                    target_left = auto_speed - 1;
-                    target_right = auto_speed;
+                    auto_speed = 3;
+                    auto_accel_tick = 0;
+                    target_left = 2;
+                    target_right = 3;
                     last_direction = -1;
                 }
                 else if (!left_black && center_black && right_black)
                 {
-                    target_left = auto_speed;
-                    target_right = auto_speed - 1;
+                    auto_speed = 3;
+                    auto_accel_tick = 0;
+                    target_left = 3;
+                    target_right = 2;
                     last_direction = 1;
                 }
                 else if (left_black && !center_black && !right_black)
                 {
+                    auto_speed = 3;
+                    auto_accel_tick = 0;
                     target_left = -2;
-                    target_right = auto_speed;
+                    target_right = 3;
                     last_direction = -1;
                 }
                 else if (!left_black && !center_black && right_black)
                 {
-                    target_left = auto_speed;
+                    auto_speed = 3;
+                    auto_accel_tick = 0;
+                    target_left = 3;
                     target_right = -2;
                     last_direction = 1;
                 }
                 else
                 {
                     /* Ambiguous pattern: steer toward the last known line side. */
+                    auto_speed = 3;
+                    auto_accel_tick = 0;
                     if (last_direction < 0)
                     {
                         target_left = -2;
@@ -199,6 +216,8 @@ int main()
         {
             /* STAGE 2: second autonomous section. */
             recovery_count = 0;
+            auto_speed = 3;
+            auto_accel_tick = 0;
 
             for (;;)
             {
@@ -255,38 +274,52 @@ int main()
 
                     if (center_black && !left_black && !right_black)
                     {
-                        if (auto_speed < 6 && ramp_tick >= 2)
+                        auto_accel_tick++;
+                        if (auto_accel_tick >= 2)
+                        {
                             auto_speed++;
+                            auto_accel_tick = 0;
+                        }
                         target_left = auto_speed;
                         target_right = auto_speed;
                         last_direction = 0;
                     }
                     else if (left_black && center_black && !right_black)
                     {
-                        target_left = auto_speed - 1;
-                        target_right = auto_speed;
+                        auto_speed = 3;
+                        auto_accel_tick = 0;
+                        target_left = 2;
+                        target_right = 3;
                         last_direction = -1;
                     }
                     else if (!left_black && center_black && right_black)
                     {
-                        target_left = auto_speed;
-                        target_right = auto_speed - 1;
+                        auto_speed = 3;
+                        auto_accel_tick = 0;
+                        target_left = 3;
+                        target_right = 2;
                         last_direction = 1;
                     }
                     else if (left_black && !center_black && !right_black)
                     {
+                        auto_speed = 3;
+                        auto_accel_tick = 0;
                         target_left = -2;
-                        target_right = auto_speed;
+                        target_right = 3;
                         last_direction = -1;
                     }
                     else if (!left_black && !center_black && right_black)
                     {
-                        target_left = auto_speed;
+                        auto_speed = 3;
+                        auto_accel_tick = 0;
+                        target_left = 3;
                         target_right = -2;
                         last_direction = 1;
                     }
                     else
                     {
+                        auto_speed = 3;
+                        auto_accel_tick = 0;
                         if (last_direction < 0)
                         {
                             target_left = -2;
@@ -349,60 +382,63 @@ int main()
             key_right = (rc(RIGHT_KEY) == TRUE);
             key_off = (rc(OFF_KEY) == TRUE);
 
-            if (key_up)
+            if (key_up || key_down || key_left || key_right)
             {
                 if (!manual_active)
                 {
                     manual_speed = 5;
-                    current_left = 5;
-                    current_right = 5;
+                    manual_ramp_tick = 0;
+                    if (key_up)
+                    {
+                        current_left = 5;
+                        current_right = 5;
+                    }
+                    else if (key_down)
+                    {
+                        current_left = -5;
+                        current_right = -5;
+                    }
+                    else if (key_left)
+                    {
+                        current_left = -5;
+                        current_right = 5;
+                    }
+                    else
+                    {
+                        current_left = 5;
+                        current_right = -5;
+                    }
                 }
-                else if (manual_speed < 6 && manual_ramp_tick >= 2)
-                    manual_speed++;
-                target_left = manual_speed;
-                target_right = manual_speed;
-                manual_active = 1;
-            }
-            else if (key_down)
-            {
-                if (!manual_active)
+                else
                 {
-                    manual_speed = 5;
-                    current_left = -5;
-                    current_right = -5;
+                    manual_ramp_tick++;
+                    if (manual_ramp_tick >= 2)
+                    {
+                        manual_speed++;
+                        manual_ramp_tick = 0;
+                    }
                 }
-                else if (manual_speed < 6 && manual_ramp_tick >= 2)
-                    manual_speed++;
-                target_left = -manual_speed;
-                target_right = -manual_speed;
-                manual_active = 1;
-            }
-            else if (key_left)
-            {
-                if (!manual_active)
+
+                if (key_up)
                 {
-                    manual_speed = 5;
-                    current_left = -5;
-                    current_right = 5;
+                    target_left = manual_speed;
+                    target_right = manual_speed;
                 }
-                else if (manual_speed < 6 && manual_ramp_tick >= 2)
-                    manual_speed++;
-                target_left = -manual_speed;
-                target_right = manual_speed;
-                manual_active = 1;
-            }
-            else if (key_right)
-            {
-                if (!manual_active)
+                else if (key_down)
                 {
-                    manual_speed = 5;
-                    current_left = 5;
-                    current_right = -5;
+                    target_left = -manual_speed;
+                    target_right = -manual_speed;
                 }
-                else if (manual_speed < 6 && manual_ramp_tick >= 2)
-                    manual_speed++;
-                target_left = manual_speed;
-                target_right = -manual_speed;
+                else if (key_left)
+                {
+                    target_left = -manual_speed;
+                    target_right = manual_speed;
+                }
+                else
+                {
+                    target_left = manual_speed;
+                    target_right = -manual_speed;
+                }
                 manual_active = 1;
             }
             else if (key_off)
@@ -451,10 +487,6 @@ int main()
                 delay(0, 0, 0, 200);
                 continue;
             }
-
-            manual_ramp_tick++;
-            if (manual_ramp_tick >= 2)
-                manual_ramp_tick = 0;
 
             ramp_tick++;
             if (ramp_tick >= 2)
