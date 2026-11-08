@@ -128,31 +128,64 @@ int main ()
                 break;
         }
 
-        /* Manual RC mode retained from the supplied working code. */
+        /*
+         * Car-like RC control:
+         * UP/DOWN selects forward/reverse.
+         * LEFT/RIGHT steers by slowing the inner wheel; steering alone stops.
+         * No counter-rotating wheels for steering.
+         */
         for(;;)
         {
-            if(rc(UP_KEY)==TRUE)
+            unsigned char up = (rc(UP_KEY)==TRUE);
+            unsigned char down = (rc(DOWN_KEY)==TRUE);
+            unsigned char left = (rc(LEFT_KEY)==TRUE);
+            unsigned char right = (rc(RIGHT_KEY)==TRUE);
+            unsigned char off = (rc(OFF_KEY)==TRUE);
+
+            if(off || (up && down) || (left && right))
             {
-                LMotor_1(10);
-                RMotor_1(10);
+                LMotor_1(0);
+                RMotor_1(0);
             }
-            if(rc(DOWN_KEY)==TRUE)
+            else if(up)
             {
-                LMotor_1(-10);
-                RMotor_1(-10);
+                if(left)
+                {
+                    LMotor_1(5);
+                    RMotor_1(10);
+                }
+                else if(right)
+                {
+                    LMotor_1(10);
+                    RMotor_1(5);
+                }
+                else
+                {
+                    LMotor_1(10);
+                    RMotor_1(10);
+                }
             }
-            if(rc(LEFT_KEY)==TRUE)
+            else if(down)
             {
-                LMotor_1(-10);
-                RMotor_1(10);
+                if(left)
+                {
+                    LMotor_1(-5);
+                    RMotor_1(-10);
+                }
+                else if(right)
+                {
+                    LMotor_1(-10);
+                    RMotor_1(-5);
+                }
+                else
+                {
+                    LMotor_1(-10);
+                    RMotor_1(-10);
+                }
             }
-            if(rc(RIGHT_KEY)==TRUE)
+            else
             {
-                LMotor_1(10);
-                RMotor_1(-10);
-            }
-            if(rc(OFF_KEY)==TRUE)
-            {
+                /* Steering without throttle behaves like a car at a stop. */
                 LMotor_1(0);
                 RMotor_1(0);
             }
