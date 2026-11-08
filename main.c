@@ -70,15 +70,25 @@ int main()
 
             if (!left_black && !center_black && !right_black)
             {
-                /* Lost line: reverse in bounded, sensor-checked pulses. */
+                /*
+                 * No black sensor sees the line: reverse at speed -2.
+                 * Keep checking all three sensors on every cycle.
+                 * When any sensor sees black, normal steering resumes.
+                 * Stop after a bounded search so colored/white floor
+                 * cannot trap the robot in an endless reverse loop.
+                 */
                 target_left = -2;
                 target_right = -2;
+                current_left = -2;
+                current_right = -2;
                 recovery_count++;
 
                 if (recovery_count > 10)
                 {
                     target_left = 0;
                     target_right = 0;
+                    current_left = 0;
+                    current_right = 0;
                     recovery_failed = 1;
                 }
             }
@@ -193,15 +203,21 @@ int main()
 
                 if (!left_black && !center_black && !right_black)
                 {
+                    /* Reverse at -2 and keep polling until black is reacquired. */
                     target_left = -2;
                     target_right = -2;
+                    current_left = -2;
+                    current_right = -2;
                     recovery_count++;
 
+                    /* Bounded fallback prevents an endless loop on colored floor. */
                     if (recovery_count > 10)
                     {
                         recovery_failed = 1;
                         target_left = 0;
                         target_right = 0;
+                        current_left = 0;
+                        current_right = 0;
                     }
                 }
                 else
